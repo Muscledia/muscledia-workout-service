@@ -1,0 +1,23 @@
+
+server:
+  port: 8082 # As defined in your Service Matrix
+
+spring:
+  application:
+    name: workout-service
+  data:
+    mongodb:
+      uri: mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+      database: muscledia_workouts
+
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka # Point to Eureka Server
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health # Expose the health endpoint for Eureka and monitoring
