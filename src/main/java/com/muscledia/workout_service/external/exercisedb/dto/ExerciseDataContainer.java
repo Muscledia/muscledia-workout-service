@@ -9,7 +9,7 @@ import java.util.List;
 public class ExerciseDataContainer {
 
     private String previousPage; // Can be null
-    private String nextPage;     // Can be null
+    private String nextPage; // Can be null
     private int totalPages;
     private int totalExercises;
     private int currentPage;
