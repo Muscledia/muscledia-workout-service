@@ -3,11 +3,9 @@ package com.muscledia.workout_service.service;
 import com.muscledia.workout_service.external.exercisedb.dto.ExerciseApiResponse;
 import com.muscledia.workout_service.external.exercisedb.dto.ExerciseData;
 import com.muscledia.workout_service.model.Exercise;
-import com.muscledia.workout_service.model.MuscleGroup;
 import com.muscledia.workout_service.model.embedded.MuscleGroupRef;
 import com.muscledia.workout_service.model.enums.ExerciseDifficulty;
 import com.muscledia.workout_service.repository.ExerciseRepository;
-import com.muscledia.workout_service.repository.MuscleGroupRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Flux;
@@ -17,9 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -29,7 +25,7 @@ import java.util.stream.Collectors;
 public class ExerciseDataService {
 
     private final ExerciseRepository exerciseRepository;
-    private final MuscleGroupRepository muscleGroupRepository;
+    private final MuscleGroupDataService muscleGroupDataService;
     private final WebClient.Builder webClientBuilder;
 
     @Value("${api.exercise.url}")
@@ -50,27 +46,26 @@ public class ExerciseDataService {
         log.info("Starting exercise data population from API");
 
         return webClient.get()
-                .uri("/exercises")
+                .uri("/exercises?offset=0&limit=50")
                 .retrieve()
-                // CHANGE HERE: Map to the new top-level DTO
-                .bodyToMono(ExerciseApiResponse.class) // The root is a single object, not an array
-                .flatMapMany(response -> { // Use flatMapMany because we'll get a Mono<List<ExerciseData>> and want to flatten to Flux<ExerciseData>
-                    if (response.isSuccess() && response.getData() != null && response.getData().getExercises() != null) {
+                .bodyToMono(ExerciseApiResponse.class)
+                .flatMapMany(response -> {
+                    if (response.isSuccess() && response.getData() != null
+                            && response.getData().getExercises() != null) {
                         log.info("API call successful. Found {} exercises.", response.getData().getExercises().size());
-                        // Convert the List<ExerciseData> into a Flux<ExerciseData> to process each one
                         return Flux.fromIterable(response.getData().getExercises());
                     } else {
                         log.warn("API response was not successful or contained no exercise data: {}", response);
-                        return Flux.empty(); // Return empty Flux if no data or not successful
+                        return Flux.empty();
                     }
                 })
-                .flatMap(this::processAndSaveExercise) // Process and save each exercise reactively
+                .flatMap(this::processAndSaveExercise)
                 .doOnComplete(() -> log.info("All exercises from API processed (initial stream complete)."))
                 .doOnError(error -> log.error("Error fetching or processing exercise data from API", error))
-                .collectList() // Collect all Mono<Exercise> results into a single list
+                .collectList()
                 .doOnSuccess(list -> log.info("Successfully processed and saved {} exercises.", list.size()))
                 .doOnError(error -> log.error("Error during final collection/saving of exercises.", error))
-                .then(); // Signal completion only after all saves are done
+                .then();
     }
 
     private Mono<Exercise> processAndSaveExercise(ExerciseData data) {
@@ -86,7 +81,7 @@ public class ExerciseDataService {
 
     private Mono<Exercise> processNewExercise(Exercise exercise) {
         List<Mono<MuscleGroupRef>> muscleGroupRefMonos = exercise.getMuscleGroups().stream()
-                .map(ref -> findOrCreateMuscleGroup(ref.getName())
+                .map(ref -> muscleGroupDataService.findOrCreateMuscleGroup(ref.getName())
                         .map(mg -> {
                             ref.setMuscleId(mg.getId());
                             return ref;
@@ -97,28 +92,15 @@ public class ExerciseDataService {
                 .collectList()
                 .map(updatedRefs -> {
                     exercise.setMuscleGroups(updatedRefs);
-                    exercise.setCreatedAt(LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()));
-                    exercise.setUpdatedAt(LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()));
+                    exercise.setCreatedAt(LocalDateTime.now());
+                    exercise.setUpdatedAt(LocalDateTime.now());
                     return exercise;
                 })
                 .flatMap(exerciseRepository::save)
-                .onErrorResume(e -> { // Changed to onErrorResume to allow stream to continue on individual errors
+                .onErrorResume(e -> {
                     log.error("Error saving new exercise {}: {}", exercise.getName(), e.getMessage());
-                    return Mono.empty(); // Return empty to effectively skip this exercise on save failure
+                    return Mono.empty();
                 });
-    }
-
-    private Mono<MuscleGroup> findOrCreateMuscleGroup(String muscleName) {
-        return muscleGroupRepository.findByName(muscleName)
-                .switchIfEmpty(createNewMuscleGroup(muscleName));
-    }
-
-    private Mono<MuscleGroup> createNewMuscleGroup(String muscleName) {
-        MuscleGroup newMuscleGroup = new MuscleGroup();
-        newMuscleGroup.setName(muscleName);
-        newMuscleGroup.setCreatedAt(LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault())); // Consistent with Instant
-        log.info("Creating new muscle group: {}", muscleName);
-        return muscleGroupRepository.save(newMuscleGroup);
     }
 
     private Exercise convertToExercise(ExerciseData data) {
@@ -138,13 +120,12 @@ public class ExerciseDataService {
         exercise.setDifficulty(ExerciseDifficulty.INTERMEDIATE);
 
         if (data.getTargetMuscles() != null && !data.getTargetMuscles().isEmpty()) {
-            exercise.setTargetMuscle(data.getTargetMuscles().get(0)); // Only sets the first target muscle as "targetMuscle" field
+            exercise.setTargetMuscle(data.getTargetMuscles().get(0));
         } else {
-            exercise.setTargetMuscle(null); // Explicitly set to null if no target muscles
+            exercise.setTargetMuscle(null);
         }
 
-        // Use a Map to ensure unique muscle group references per exercise,
-        // and correctly handle primary/secondary status.
+        // Use a Map to ensure unique muscle group references per exercise
         Map<String, MuscleGroupRef> uniqueMuscleGroupRefs = new HashMap<>();
 
         // Process target muscles (they are primary)
@@ -153,14 +134,16 @@ public class ExerciseDataService {
                 MuscleGroupRef ref = new MuscleGroupRef();
                 ref.setName(muscleName);
                 ref.setPrimary(true); // Target muscles are primary
-                uniqueMuscleGroupRefs.put(muscleName, ref); // Add to map, new entry or replaces existing if secondary was added first
+                uniqueMuscleGroupRefs.put(muscleName, ref); // Add to map, new entry or replaces existing if secondary
+                                                            // was added first
             });
         }
 
         // Process secondary muscles
         if (data.getSecondaryMuscles() != null) {
             data.getSecondaryMuscles().forEach(muscleName -> {
-                // If the muscle is already in the map as a target (primary), keep it as primary.
+                // If the muscle is already in the map as a target (primary), keep it as
+                // primary.
                 // Otherwise, add it as a secondary muscle.
                 uniqueMuscleGroupRefs.computeIfAbsent(muscleName, k -> {
                     MuscleGroupRef ref = new MuscleGroupRef();
