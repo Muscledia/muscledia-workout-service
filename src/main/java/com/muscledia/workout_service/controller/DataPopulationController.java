@@ -54,4 +54,26 @@ public class DataPopulationController {
                             .body("Error during complete data population: " + error.getMessage()));
                 });
     }
+
+    @PostMapping("/cleanup-duplicate-muscle-groups")
+    public Mono<ResponseEntity<String>> cleanupDuplicateMuscleGroups() {
+        return muscleGroupDataService.cleanupDuplicateMuscleGroups()
+                .thenReturn(ResponseEntity.ok("Duplicate muscle groups cleanup completed successfully."))
+                .onErrorResume(error -> {
+                    System.err.println("Error during muscle group cleanup: " + error.getMessage());
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error during muscle group cleanup: " + error.getMessage()));
+                });
+    }
+
+    @PostMapping("/populate-target-muscles-from-api")
+    public Mono<ResponseEntity<String>> populateTargetMusclesFromApi() {
+        return muscleGroupDataService.fetchTargetMusclesFromApi()
+                .thenReturn(ResponseEntity.ok("Target muscles from API populated successfully."))
+                .onErrorResume(error -> {
+                    System.err.println("Error during target muscles population: " + error.getMessage());
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error during target muscles population: " + error.getMessage()));
+                });
+    }
 }
