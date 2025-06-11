@@ -14,6 +14,13 @@ import com.muscledia.workout_service.model.MuscleGroup;
 public interface MuscleGroupRepository extends ReactiveMongoRepository<MuscleGroup, String> {
     Mono<MuscleGroup> findByName(String name);
 
+    /**
+     * Safe version of findByName that takes the first result if multiple exist
+     * Used to handle potential duplicate scenarios gracefully
+     */
+    @Query("{'name': ?0}")
+    Mono<MuscleGroup> findFirstByName(String name);
+
     Mono<MuscleGroup> findByLatinName(String latinName);
 
     Flux<MuscleGroup> findByNameContainingIgnoreCase(String partialName);
