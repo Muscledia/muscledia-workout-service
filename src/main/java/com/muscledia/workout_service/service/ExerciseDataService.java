@@ -46,13 +46,21 @@ public class ExerciseDataService {
         log.info("Starting exercise data population from API");
 
         return webClient.get()
-                .uri("/exercises?offset=0&limit=50")
+                .uri("/exercises?offset=0&limit=100")
                 .retrieve()
                 .bodyToMono(ExerciseApiResponse.class)
                 .flatMapMany(response -> {
                     if (response.isSuccess() && response.getData() != null
                             && response.getData().getExercises() != null) {
-                        log.info("API call successful. Found {} exercises.", response.getData().getExercises().size());
+                        int exerciseCount = response.getData().getExercises().size();
+                        log.info("API call successful. Found {} exercises from API.", exerciseCount);
+
+                        if (exerciseCount < 100) {
+                            log.warn(
+                                    "Expected 100 exercises but only got {}. This might be normal if there are fewer total exercises.",
+                                    exerciseCount);
+                        }
+
                         return Flux.fromIterable(response.getData().getExercises());
                     } else {
                         log.warn("API response was not successful or contained no exercise data: {}", response);
@@ -63,7 +71,10 @@ public class ExerciseDataService {
                 .doOnComplete(() -> log.info("All exercises from API processed (initial stream complete)."))
                 .doOnError(error -> log.error("Error fetching or processing exercise data from API", error))
                 .collectList()
-                .doOnSuccess(list -> log.info("Successfully processed and saved {} exercises.", list.size()))
+                .doOnSuccess(list -> {
+                    long successfulCount = list.stream().filter(exercise -> exercise != null).count();
+                    log.info("Successfully processed and saved {} out of {} exercises.", successfulCount, list.size());
+                })
                 .doOnError(error -> log.error("Error during final collection/saving of exercises.", error))
                 .then();
     }
@@ -85,6 +96,12 @@ public class ExerciseDataService {
                         .map(mg -> {
                             ref.setMuscleId(mg.getId());
                             return ref;
+                        })
+                        .onErrorResume(error -> {
+                            log.warn("Error finding/creating muscle group '{}': {}. Creating basic reference.",
+                                    ref.getName(), error.getMessage());
+                            // Create a basic reference without muscle ID if lookup fails
+                            return Mono.just(ref);
                         }))
                 .collect(Collectors.toList());
 
@@ -96,10 +113,16 @@ public class ExerciseDataService {
                     exercise.setUpdatedAt(LocalDateTime.now());
                     return exercise;
                 })
-                .flatMap(exerciseRepository::save)
+                .flatMap(ex -> exerciseRepository.save(ex)
+                        .doOnSuccess(saved -> log.debug("Successfully saved exercise: {}", saved.getName()))
+                        .onErrorResume(saveError -> {
+                            log.error("Error saving exercise '{}': {}. Skipping this exercise.",
+                                    ex.getName(), saveError.getMessage());
+                            return Mono.empty(); // Skip this exercise but continue processing others
+                        }))
                 .onErrorResume(e -> {
-                    log.error("Error saving new exercise {}: {}", exercise.getName(), e.getMessage());
-                    return Mono.empty();
+                    log.error("Error processing exercise {}: {}", exercise.getName(), e.getMessage());
+                    return Mono.empty(); // Skip this exercise but continue processing others
                 });
     }
 
