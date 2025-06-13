@@ -23,6 +23,9 @@ public class Workout {
     @Field("user_id")
     private Long userId;
 
+    @Field("workout_plan_id")
+    private String workoutPlanId; // Reference to the plan used (optional)
+
     @Field("workout_date")
     private LocalDateTime workoutDate;
 
