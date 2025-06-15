@@ -1,8 +1,6 @@
 package com.muscledia.workout_service.model;
 
 import com.muscledia.workout_service.model.embedded.PlannedExercise;
-import com.muscledia.workout_service.model.enums.WorkoutDifficulty;
-import com.muscledia.workout_service.model.enums.WorkoutType;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.CreatedDate;
@@ -21,38 +19,26 @@ public class WorkoutPlan {
     private String id;
 
     @Indexed
-    private String name;
+    private String title;
+
+    @Field("folder_id")
+    private Long folderId;
 
     private String description;
 
-    @Field("difficulty_level")
-    private WorkoutDifficulty difficulty;
-
-    @Field("workout_type")
-    private WorkoutType type;
+    private List<PlannedExercise> exercises;
 
     @Field("estimated_duration_minutes")
     private Integer estimatedDurationMinutes;
 
-    @Field("target_muscle_groups")
-    private List<String> targetMuscleGroups;
-
-    @Field("required_equipment")
-    private List<String> requiredEquipment;
-
-    @Field("planned_exercises")
-    private List<PlannedExercise> exercises;
-
     @Field("is_public")
-    private Boolean isPublic = false;
+    private Boolean isPublic = true;
 
     @Field("created_by")
-    private Long createdBy; // User ID who created this plan
+    private Long createdBy = 1L;
 
     @Field("usage_count")
     private Long usageCount = 0L;
-
-    private String tags;
 
     @CreatedDate
     @Field("created_at")
@@ -61,4 +47,21 @@ public class WorkoutPlan {
     @LastModifiedDate
     @Field("updated_at")
     private LocalDateTime updatedAt;
+
+    public void calculateEstimatedDuration() {
+        if (exercises == null || exercises.isEmpty()) {
+            this.estimatedDurationMinutes = 0;
+            return;
+        }
+
+        int totalRestSeconds = exercises.stream()
+                .mapToInt(ex -> {
+                    int sets = ex.getSets() != null ? ex.getSets().size() : 0;
+                    int restSeconds = ex.getRestSeconds() != null ? ex.getRestSeconds() : 0;
+                    return (sets - 1) * restSeconds;
+                })
+                .sum();
+
+        this.estimatedDurationMinutes = (totalRestSeconds / 60) + (exercises.size() * 5);
+    }
 }

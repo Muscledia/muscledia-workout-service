@@ -2,42 +2,45 @@ package com.muscledia.workout_service.model.embedded;
 
 import lombok.Data;
 import org.springframework.data.mongodb.core.mapping.Field;
+import java.util.List;
 
 @Data
 public class PlannedExercise {
-    @Field("exercise_id")
-    private String exerciseId;
+    private Integer index;
 
-    @Field("exercise_name")
-    private String exerciseName; // Denormalized for easier display
+    private String title;
 
-    @Field("target_sets")
-    private Integer targetSets;
+    private String notes;
 
-    @Field("target_reps_min")
-    private Integer targetRepsMin;
+    @Field("exercise_template_id")
+    private String exerciseTemplateId;
 
-    @Field("target_reps_max")
-    private Integer targetRepsMax;
+    @Field("superset_id")
+    private String supersetId;
 
     @Field("rest_seconds")
     private Integer restSeconds;
 
-    @Field("exercise_order")
-    private Integer order;
+    private List<PlannedSet> sets;
 
-    @Field("is_superset")
-    private Boolean isSuperset = false;
+    @Data
+    public static class PlannedSet {
+        private Integer index;
 
-    @Field("superset_group")
-    private String supersetGroup; // Group exercises in a superset
+        private String type; // "normal", "warmup", etc.
 
-    private String notes;
+        @Field("weight_kg")
+        private Double weightKg;
 
-    // Optional: intensity techniques
-    @Field("rpe_target")
-    private Integer rpeTarget; // Rate of Perceived Exertion (1-10)
+        private Integer reps;
 
-    @Field("percentage_1rm")
-    private Integer percentage1RM; // Percentage of 1 Rep Max
+        @Field("distance_meters")
+        private Double distanceMeters;
+
+        @Field("duration_seconds")
+        private Integer durationSeconds;
+
+        @Field("custom_metric")
+        private String customMetric;
+    }
 }
