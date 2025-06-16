@@ -2,9 +2,13 @@ package com.muscledia.workout_service.controller;
 
 import com.muscledia.workout_service.service.ExerciseDataService;
 import com.muscledia.workout_service.service.MuscleGroupDataService;
+import com.muscledia.workout_service.external.hevy.dto.HevyApiResponse;
+import com.muscledia.workout_service.service.HevyDataService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
@@ -12,10 +16,12 @@ import reactor.core.publisher.Mono;
 @RestController
 @RequestMapping("/api/admin/data")
 @RequiredArgsConstructor
+@Slf4j
 public class DataPopulationController {
 
     private final ExerciseDataService exerciseDataService;
     private final MuscleGroupDataService muscleGroupDataService;
+    private final HevyDataService hevyDataService;
 
     @PostMapping("/populate-exercises")
     public Mono<ResponseEntity<String>> populateExercises() {
@@ -74,6 +80,55 @@ public class DataPopulationController {
                     System.err.println("Error during target muscles population: " + error.getMessage());
                     return Mono.just(ResponseEntity.internalServerError()
                             .body("Error during target muscles population: " + error.getMessage()));
+                });
+    }
+
+    @PostMapping("/hevy/populate")
+    public Mono<ResponseEntity<String>> populateHevyData(@RequestBody HevyApiResponse hevyApiResponse) {
+        log.info("Received request to populate {} workout plans from Hevy", hevyApiResponse.getRoutines().size());
+
+        return hevyDataService.populateWorkoutPlans(hevyApiResponse)
+                .thenReturn(ResponseEntity.ok("Successfully populated workout plans from Hevy"))
+                .onErrorResume(e -> {
+                    log.error("Error populating workout plans from Hevy", e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error populating workout plans: " + e.getMessage()));
+                });
+    }
+
+    @PostMapping("/hevy/fetch-all")
+    public Mono<ResponseEntity<String>> fetchAllHevyData() {
+        log.info("Starting to fetch all data from Hevy API");
+        return hevyDataService.fetchAndPopulateAllData()
+                .thenReturn(ResponseEntity.ok("Successfully fetched and populated all Hevy data"))
+                .onErrorResume(e -> {
+                    log.error("Error fetching data from Hevy API", e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error fetching Hevy data: " + e.getMessage()));
+                });
+    }
+
+    @PostMapping("/hevy/fetch-routines")
+    public Mono<ResponseEntity<String>> fetchHevyRoutines() {
+        log.info("Starting to fetch routines from Hevy API");
+        return hevyDataService.fetchAndPopulateRoutines()
+                .thenReturn(ResponseEntity.ok("Successfully fetched and populated Hevy routines"))
+                .onErrorResume(e -> {
+                    log.error("Error fetching routines from Hevy API", e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error fetching Hevy routines: " + e.getMessage()));
+                });
+    }
+
+    @PostMapping("/hevy/fetch-folders")
+    public Mono<ResponseEntity<String>> fetchHevyFolders() {
+        log.info("Starting to fetch routine folders from Hevy API");
+        return hevyDataService.fetchAndPopulateRoutineFolders()
+                .thenReturn(ResponseEntity.ok("Successfully fetched Hevy routine folders"))
+                .onErrorResume(e -> {
+                    log.error("Error fetching routine folders from Hevy API", e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error fetching Hevy routine folders: " + e.getMessage()));
                 });
     }
 }
