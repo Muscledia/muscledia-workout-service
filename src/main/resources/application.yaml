@@ -23,3 +23,11 @@ management:
 api:
   exercise:
     url: ${EXERCISE_API_URL:https://www.exercisedb.dev/api/v1}
+  hevy:
+    base-url: https://api.hevyapp.com
+    version: v1
+    api-key: ${HEVY_API_KEY:879a3ffd-2482-4bd4-92af-b54d3b8c65f5}
+    routines-page-size: 10
+    routine-folders-page-size: 10
+    max-routines-pages: 6
+    max-routine-folders-pages: 2
