@@ -2,6 +2,7 @@ package com.muscledia.workout_service.controller;
 
 import com.muscledia.workout_service.service.ExerciseDataService;
 import com.muscledia.workout_service.service.MuscleGroupDataService;
+import com.muscledia.workout_service.service.RoutineFolderService;
 import com.muscledia.workout_service.external.hevy.dto.HevyApiResponse;
 import com.muscledia.workout_service.service.HevyDataService;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class DataPopulationController {
 
     private final ExerciseDataService exerciseDataService;
     private final MuscleGroupDataService muscleGroupDataService;
+    private final RoutineFolderService routineFolderService;
     private final HevyDataService hevyDataService;
 
     @PostMapping("/populate-exercises")
@@ -130,5 +132,48 @@ public class DataPopulationController {
                     return Mono.just(ResponseEntity.internalServerError()
                             .body("Error fetching Hevy routine folders: " + e.getMessage()));
                 });
+    }
+
+    @PostMapping("/create-test-routine-folders")
+    public Mono<ResponseEntity<String>> createTestRoutineFolders() {
+        log.info("Creating test routine folders");
+
+        return Mono.fromCallable(() -> {
+            // Create test routine folders
+            java.util.List<com.muscledia.workout_service.model.RoutineFolder> testFolders = java.util.Arrays.asList(
+                    createTestFolder("Beginner Full Body Workout", "BEGINNER", "EQUIPMENT_FREE", "FULL_BODY"),
+                    createTestFolder("Intermediate Push Pull Legs", "INTERMEDIATE", "GYM_EQUIPMENT", "PUSH_PULL_LEGS"),
+                    createTestFolder("Advanced Upper Lower Split", "ADVANCED", "DUMBBELLS", "UPPER_LOWER"),
+                    createTestFolder("Home Workout Collection", "BEGINNER", "EQUIPMENT_FREE", "FULL_BODY"),
+                    createTestFolder("Gym Beast Mode", "ADVANCED", "GYM_EQUIPMENT", "PUSH_PULL_LEGS"));
+            return testFolders;
+        })
+                .flatMapMany(reactor.core.publisher.Flux::fromIterable)
+                .flatMap(folder -> {
+                    // Use the routine folder service to save
+                    return routineFolderService.save(folder);
+                })
+                .count()
+                .map(count -> ResponseEntity.ok("Successfully created " + count + " test routine folders"))
+                .onErrorResume(e -> {
+                    log.error("Error creating test routine folders", e);
+                    return Mono.just(ResponseEntity.internalServerError()
+                            .body("Error creating test routine folders: " + e.getMessage()));
+                });
+    }
+
+    private com.muscledia.workout_service.model.RoutineFolder createTestFolder(String title, String difficulty,
+            String equipment, String split) {
+        com.muscledia.workout_service.model.RoutineFolder folder = new com.muscledia.workout_service.model.RoutineFolder();
+        folder.setTitle(title);
+        folder.setDifficultyLevel(difficulty);
+        folder.setEquipmentType(equipment);
+        folder.setWorkoutSplit(split);
+        folder.setIsPublic(true);
+        folder.setCreatedBy(1L);
+        folder.setUsageCount(0L);
+        folder.setCreatedAt(java.time.LocalDateTime.now());
+        folder.setUpdatedAt(java.time.LocalDateTime.now());
+        return folder;
     }
 }
