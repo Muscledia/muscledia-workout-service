@@ -20,5 +20,11 @@ public interface RoutineFolderRepository extends ReactiveMongoRepository<Routine
 
     Flux<RoutineFolder> findByTitleContainingIgnoreCase(String searchTerm);
 
+    // Find public routine folders
+    Flux<RoutineFolder> findByIsPublicTrue();
+
+    // Find personal routine folders (private, created by user)
+    Flux<RoutineFolder> findByCreatedByAndIsPublicFalse(Long userId);
+
     Mono<Boolean> existsByHevyId(Long hevyId);
 }

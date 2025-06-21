@@ -58,14 +58,49 @@ public class RoutineFolderService {
                 .doOnSuccess(exists -> log.debug("Checked existence of Hevy ID: {}, exists: {}", hevyId, exists));
     }
 
-    public Mono<RoutineFolder> save(RoutineFolder folder) {
-        if (folder.getCreatedAt() == null) {
-            folder.setCreatedAt(LocalDateTime.now());
+    public Mono<RoutineFolder> save(RoutineFolder routineFolder) {
+        if (routineFolder.getCreatedAt() == null) {
+            routineFolder.setCreatedAt(LocalDateTime.now());
         }
-        folder.setUpdatedAt(LocalDateTime.now());
+        routineFolder.setUpdatedAt(LocalDateTime.now());
+        routineFolder.parseMetadataFromTitle();
 
-        return routineFolderRepository.save(folder)
+        return routineFolderRepository.save(routineFolder)
                 .doOnSuccess(saved -> log.debug("Saved routine folder: {}", saved.getTitle()));
+    }
+
+    public Mono<RoutineFolder> saveToPersonalCollection(String publicFolderId, Long userId) {
+        return findById(publicFolderId)
+                .flatMap(publicFolder -> {
+                    // Create a copy for the user's personal collection
+                    RoutineFolder personalFolder = new RoutineFolder();
+                    personalFolder.setTitle(publicFolder.getTitle());
+                    personalFolder.setWorkoutPlanIds(publicFolder.getWorkoutPlanIds());
+                    personalFolder.setDifficultyLevel(publicFolder.getDifficultyLevel());
+                    personalFolder.setEquipmentType(publicFolder.getEquipmentType());
+                    personalFolder.setWorkoutSplit(publicFolder.getWorkoutSplit());
+                    personalFolder.setIsPublic(false); // Personal copy
+                    personalFolder.setCreatedBy(userId);
+                    personalFolder.setUsageCount(0L);
+                    personalFolder.setCreatedAt(LocalDateTime.now());
+
+                    // Increment usage count on original public folder
+                    publicFolder.setUsageCount(publicFolder.getUsageCount() + 1);
+
+                    return routineFolderRepository.save(publicFolder)
+                            .then(routineFolderRepository.save(personalFolder));
+                })
+                .doOnSuccess(saved -> log.debug("Saved routine folder to personal collection for user: {}", userId));
+    }
+
+    public Flux<RoutineFolder> findPublicRoutineFolders() {
+        return routineFolderRepository.findByIsPublicTrue()
+                .doOnComplete(() -> log.debug("Retrieved public routine folders"));
+    }
+
+    public Flux<RoutineFolder> findPersonalRoutineFolders(Long userId) {
+        return routineFolderRepository.findByCreatedByAndIsPublicFalse(userId)
+                .doOnComplete(() -> log.debug("Retrieved personal routine folders for user: {}", userId));
     }
 
     public Mono<Void> deleteById(String id) {
@@ -75,6 +110,14 @@ public class RoutineFolderService {
 
     public Flux<RoutineFolder> findAll() {
         return routineFolderRepository.findAll()
+                .map(folder -> {
+                    // Parse metadata from title if not already set
+                    if (folder.getDifficultyLevel() == null || folder.getEquipmentType() == null
+                            || folder.getWorkoutSplit() == null) {
+                        folder.parseMetadataFromTitle();
+                    }
+                    return folder;
+                })
                 .doOnComplete(() -> log.debug("Retrieved all routine folders"));
     }
 

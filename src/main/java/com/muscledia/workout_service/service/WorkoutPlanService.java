@@ -94,6 +94,34 @@ public class WorkoutPlanService {
                 .doOnSuccess(saved -> log.debug("Saved workout plan: {}", saved.getTitle()));
     }
 
+    public Mono<WorkoutPlan> saveToPersonalCollection(String publicWorkoutPlanId, Long userId) {
+        return findById(publicWorkoutPlanId)
+                .flatMap(publicPlan -> {
+                    // Create a copy for the user's personal collection
+                    WorkoutPlan personalPlan = new WorkoutPlan();
+                    personalPlan.setTitle(publicPlan.getTitle());
+                    personalPlan.setDescription(publicPlan.getDescription());
+                    personalPlan.setExercises(publicPlan.getExercises());
+                    personalPlan.setEstimatedDurationMinutes(publicPlan.getEstimatedDurationMinutes());
+                    personalPlan.setIsPublic(false); // Personal copy
+                    personalPlan.setCreatedBy(userId);
+                    personalPlan.setUsageCount(0L);
+                    personalPlan.setCreatedAt(LocalDateTime.now());
+
+                    // Increment usage count on original public plan
+                    publicPlan.setUsageCount(publicPlan.getUsageCount() + 1);
+
+                    return workoutPlanRepository.save(publicPlan)
+                            .then(workoutPlanRepository.save(personalPlan));
+                })
+                .doOnSuccess(saved -> log.debug("Saved workout plan to personal collection for user: {}", userId));
+    }
+
+    public Flux<WorkoutPlan> findPersonalWorkoutPlans(Long userId) {
+        return workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
+                .doOnComplete(() -> log.debug("Retrieved personal workout plans for user: {}", userId));
+    }
+
     public Mono<WorkoutPlan> incrementUsageCount(String id) {
         return findById(id)
                 .flatMap(plan -> {
