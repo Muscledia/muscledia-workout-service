@@ -6,7 +6,7 @@ spring:
     name: workout-service
   data:
     mongodb:
-      uri: mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+      uri: mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/muscledia_workouts?retryWrites=true&w=majority&appName=Cluster0
       database: muscledia_workouts
 
 eureka:
