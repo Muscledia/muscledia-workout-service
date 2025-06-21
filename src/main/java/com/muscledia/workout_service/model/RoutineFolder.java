@@ -40,6 +40,15 @@ public class RoutineFolder {
     @Field("workout_split")
     private String workoutSplit; // FULL_BODY, UPPER_LOWER, PUSH_PULL_LEGS - extracted from title
 
+    @Field("is_public")
+    private Boolean isPublic = true;
+
+    @Field("created_by")
+    private Long createdBy = 1L; // System user for public folders, user ID for personal folders
+
+    @Field("usage_count")
+    private Long usageCount = 0L;
+
     @CreatedDate
     @Field("created_at")
     private LocalDateTime createdAt;
