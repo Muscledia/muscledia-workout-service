@@ -20,6 +20,9 @@ public interface WorkoutPlanRepository extends ReactiveMongoRepository<WorkoutPl
     // Find by creator
     Flux<WorkoutPlan> findByCreatedBy(Long userId);
 
+    // Find personal workout plans (private, created by user)
+    Flux<WorkoutPlan> findByCreatedByAndIsPublicFalse(Long userId);
+
     // Find popular workout plans (by usage count)
     Flux<WorkoutPlan> findByIsPublicTrueOrderByUsageCountDesc(Pageable pageable);
 
