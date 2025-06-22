@@ -20,6 +20,26 @@ management:
       exposure:
         include: health # Expose the health endpoint for Eureka and monitoring
 
+# SpringDoc OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: method
+    tags-sorter: alpha
+    try-it-out-enabled: true
+  show-actuator: false
+  group-configs:
+    - group: "public-api"
+      display-name: "Public API"
+      paths-to-match: "/api/v1/**"
+    - group: "admin-api"
+      display-name: "Admin API"
+      paths-to-match: "/api/admin/**"
+
 api:
   exercise:
     url: ${EXERCISE_API_URL:https://www.exercisedb.dev/api/v1}
