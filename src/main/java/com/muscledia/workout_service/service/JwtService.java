@@ -4,7 +4,6 @@ import com.muscledia.workout_service.config.JwtProperties;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -14,7 +13,6 @@ import java.util.List;
 import java.util.function.Function;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class JwtService {
 
