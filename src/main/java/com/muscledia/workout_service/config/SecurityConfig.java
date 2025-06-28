@@ -43,6 +43,10 @@ public class SecurityConfig {
                         // Public endpoints - no authentication required
                         .pathMatchers(getPublicEndpoints()).permitAll()
 
+                        // Swagger UI and API docs - should be public
+                        .pathMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html", "/webjars/**")
+                        .permitAll()
+
                         // Admin endpoints - require ADMIN role
                         .pathMatchers(getAdminEndpoints()).hasRole("ADMIN")
 
