@@ -51,3 +51,28 @@ api:
     routine-folders-page-size: 10
     max-routines-pages: 6
     max-routine-folders-pages: 2
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:1e5bf199c6450231fdd242f60485d0caadc32aa27a0d89da7174aed38326a879}
+  expiration: ${JWT_EXPIRATION:86400000} # 24 hours in milliseconds
+  issuer: ${JWT_ISSUER:muscledia-user-service}
+
+# User Service Configuration (for JWT validation)
+user-service:
+  url: ${USER_SERVICE_URL:http://localhost:8081}
+  validate-token-endpoint: ${USER_SERVICE_VALIDATE_ENDPOINT:/api/v1/auth/validate}
+
+# Security Configuration
+security:
+  public-endpoints:
+    - /api/v1/exercises/**
+    - /api/v1/muscle-groups/**
+    - /api/v1/auth/test
+    - /api-docs/**
+    - /swagger-ui/**
+    - /swagger-ui.html
+    - /actuator/health
+    - /webjars/**
+  admin-endpoints:
+    - /api/admin/**
