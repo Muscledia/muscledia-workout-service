@@ -34,42 +34,44 @@ public class JwtAuthenticationWebFilter implements WebFilter {
     }
 
     private Mono<String> extractToken(ServerWebExchange exchange) {
-        return Mono.fromCallable(() -> {
-            String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-            if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)) {
-                return authHeader.substring(BEARER_PREFIX.length());
-            }
-            return null;
-        }).onErrorReturn(null);
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)) {
+            String token = authHeader.substring(BEARER_PREFIX.length());
+            return Mono.just(token);
+        }
+        return Mono.empty();
     }
 
     private Mono<Authentication> authenticateToken(String token) {
-        return Mono.fromCallable(() -> {
-            if (token == null || !jwtService.validateToken(token)) {
-                return null;
+        if (token == null || token.trim().isEmpty()) {
+            return Mono.empty();
+        }
+
+        try {
+            if (!jwtService.validateToken(token)) {
+                log.debug("Invalid JWT token");
+                return Mono.empty();
             }
 
-            try {
-                String username = jwtService.extractUsername(token);
-                Long userId = jwtService.extractUserId(token);
-                String email = jwtService.extractEmail(token);
-                List<String> roles = jwtService.extractRoles(token);
+            String username = jwtService.extractUsername(token);
+            Long userId = jwtService.extractUserId(token);
+            String email = jwtService.extractEmail(token);
+            List<String> roles = jwtService.extractRoles(token);
 
-                List<SimpleGrantedAuthority> authorities = roles.stream()
-                        .map(role -> new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
-                        .collect(Collectors.toList());
+            List<SimpleGrantedAuthority> authorities = roles.stream()
+                    .map(role -> new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
+                    .collect(Collectors.toList());
 
-                JwtAuthenticationToken authToken = new JwtAuthenticationToken(
-                        username, userId, email, authorities, token);
-                authToken.setAuthenticated(true);
+            JwtAuthenticationToken authToken = new JwtAuthenticationToken(
+                    username, userId, email, authorities, token);
+            authToken.setAuthenticated(true);
 
-                log.debug("Successfully authenticated user: {} with roles: {}", username, roles);
-                return (Authentication) authToken;
+            log.debug("Successfully authenticated user: {} with roles: {}", username, roles);
+            return Mono.just(authToken);
 
-            } catch (Exception e) {
-                log.error("Failed to authenticate token: {}", e.getMessage());
-                return null;
-            }
-        }).onErrorReturn(null);
+        } catch (Exception e) {
+            log.error("Failed to authenticate token: {}", e.getMessage());
+            return Mono.empty();
+        }
     }
 }
