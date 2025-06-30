@@ -31,6 +31,9 @@ springdoc:
     operations-sorter: method
     tags-sorter: alpha
     try-it-out-enabled: true
+    disable-swagger-default-url: true
+    config-url: /api-docs/swagger-config
+    url: /api-docs
   show-actuator: false
   group-configs:
     - group: "public-api"
