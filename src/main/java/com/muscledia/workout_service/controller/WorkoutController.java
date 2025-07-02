@@ -1,7 +1,10 @@
 package com.muscledia.workout_service.controller;
 
+import com.muscledia.workout_service.dto.request.CreateWorkoutRequest;
+import com.muscledia.workout_service.dto.request.UpdateWorkoutRequest;
 import com.muscledia.workout_service.model.Workout;
 import com.muscledia.workout_service.service.AuthenticationService;
+import com.muscledia.workout_service.service.WorkoutMapperService;
 import com.muscledia.workout_service.service.WorkoutService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -13,6 +16,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -33,6 +37,7 @@ import java.time.LocalDateTime;
 public class WorkoutController {
         private final WorkoutService workoutService;
         private final AuthenticationService authenticationService;
+        private final WorkoutMapperService workoutMapperService;
 
         @GetMapping("/{id}")
         @Operation(summary = "Get workout by ID", description = "Retrieve a specific workout by its unique identifier. User can only access their own workouts.", security = @SecurityRequirement(name = "bearer-key"))
@@ -102,32 +107,28 @@ public class WorkoutController {
                         @ApiResponse(responseCode = "401", description = "Authentication required")
         })
         public Mono<Workout> createWorkout(
-                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Workout data to create", content = @Content(mediaType = "application/json", schema = @Schema(implementation = Workout.class), examples = @ExampleObject(value = """
+                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Workout data to create", content = @Content(mediaType = "application/json", schema = @Schema(implementation = CreateWorkoutRequest.class), examples = @ExampleObject(value = """
                                         {
                                           "workoutDate": "2024-01-15T10:30:00",
-                                          "duration": 60,
+                                          "durationMinutes": 60,
                                           "totalVolume": 5250.0,
                                           "notes": "Great workout today!",
                                           "exercises": [
                                             {
                                               "exerciseId": "507f1f77bcf86cd799439011",
-                                              "exerciseName": "Bench Press",
-                                              "sets": [
-                                                {
-                                                  "reps": 10,
-                                                  "weight": 135.0,
-                                                  "restTime": 90
-                                                }
-                                              ]
+                                              "sets": 3,
+                                              "reps": 10,
+                                              "weight": 135.0,
+                                              "order": 1
                                             }
                                           ]
                                         }
-                                        """))) @RequestBody Workout workout) {
+                                        """))) @Valid @RequestBody CreateWorkoutRequest request) {
                 return authenticationService.getCurrentUserId()
-                                .flatMap(userId -> {
-                                        workout.setUserId(userId);
-                                        return workoutService.save(workout);
-                                });
+                                .map(userId -> workoutMapperService.toEntity(request, userId))
+                                .flatMap(workoutService::save)
+                                .doOnSuccess(workout -> log.info("Created workout for user: {} with {} exercises",
+                                                workout.getUserId(), workout.getExercises().size()));
         }
 
         @PutMapping("/{id}")
@@ -141,15 +142,15 @@ public class WorkoutController {
         })
         public Mono<ResponseEntity<Workout>> updateWorkout(
                         @Parameter(description = "Workout ID to update", example = "507f1f77bcf86cd799439011") @PathVariable String id,
-                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated workout data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = Workout.class))) @RequestBody Workout workout) {
+                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated workout data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = UpdateWorkoutRequest.class))) @Valid @RequestBody UpdateWorkoutRequest request) {
                 return workoutService.findById(id)
                                 .flatMap(existingWorkout -> authenticationService
                                                 .isCurrentUser(existingWorkout.getUserId())
                                                 .flatMap(isOwner -> {
                                                         if (isOwner) {
-                                                                workout.setId(id);
-                                                                workout.setUserId(existingWorkout.getUserId());
-                                                                return workoutService.save(workout)
+                                                                Workout updatedWorkout = workoutMapperService
+                                                                                .updateEntity(existingWorkout, request);
+                                                                return workoutService.save(updatedWorkout)
                                                                                 .map(ResponseEntity::ok);
                                                         } else {
                                                                 return Mono.just(ResponseEntity
