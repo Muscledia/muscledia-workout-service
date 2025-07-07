@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.controller;
 
 import com.muscledia.workout_service.model.RoutineFolder;
+import com.muscledia.workout_service.service.AuthenticationService;
 import com.muscledia.workout_service.service.RoutineFolderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,7 @@ import reactor.core.publisher.Mono;
 @Tag(name = "Routine Folders", description = "Organized collections of workout routines")
 public class RoutineFolderController {
         private final RoutineFolderService routineFolderService;
+        private final AuthenticationService authenticationService;
 
         // PUBLIC EXPLORATION ENDPOINTS (No authentication required)
 
@@ -126,42 +129,37 @@ public class RoutineFolderController {
 
         @PostMapping("/save/{publicId}")
         @ResponseStatus(HttpStatus.CREATED)
-        @Operation(summary = "Save routine folder to personal collection", description = "Save a public routine folder to user's personal collection")
+        @Operation(summary = "Save routine folder to personal collection", description = "Save a public routine folder to user's personal collection", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "201", description = "Routine folder saved to personal collection successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))),
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
                         @ApiResponse(responseCode = "404", description = "Public routine folder not found"),
                         @ApiResponse(responseCode = "409", description = "Routine folder already in personal collection")
         })
         public Mono<RoutineFolder> saveToPersonalCollection(
-                        @Parameter(description = "Public routine folder ID to save", example = "507f1f77bcf86cd799439011") @PathVariable String publicId,
-                        @Parameter(description = "User ID (in real app, this would come from JWT token)", example = "12345") @RequestParam Long userId) { // In
-                                                                                                                                                          // real
-                                                                                                                                                          // app,
-                                                                                                                                                          // this
-                                                                                                                                                          // would
-                                                                                                                                                          // come
-                                                                                                                                                          // from
-                                                                                                                                                          // JWT
-                                                                                                                                                          // token
-                return routineFolderService.saveToPersonalCollection(publicId, userId);
+                        @Parameter(description = "Public routine folder ID to save", example = "507f1f77bcf86cd799439011") @PathVariable String publicId) {
+                return authenticationService.getCurrentUserId()
+                                .flatMap(userId -> routineFolderService.saveToPersonalCollection(publicId, userId));
         }
 
         @GetMapping("/personal")
-        @Operation(summary = "Get personal routine folders", description = "Retrieve all routine folders in user's personal collection")
+        @Operation(summary = "Get personal routine folders", description = "Retrieve all routine folders in user's personal collection", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
-                        @ApiResponse(responseCode = "200", description = "Personal routine folders retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = RoutineFolder.class))))
+                        @ApiResponse(responseCode = "200", description = "Personal routine folders retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = RoutineFolder.class)))),
+                        @ApiResponse(responseCode = "401", description = "Authentication required")
         })
-        public Flux<RoutineFolder> getPersonalRoutineFolders(
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                return routineFolderService.findPersonalRoutineFolders(userId);
+        public Flux<RoutineFolder> getPersonalRoutineFolders() {
+                return authenticationService.getCurrentUserId()
+                                .flatMapMany(routineFolderService::findPersonalRoutineFolders);
         }
 
         @PostMapping("/personal")
         @ResponseStatus(HttpStatus.CREATED)
-        @Operation(summary = "Create personal routine folder", description = "Create a new private routine folder for the user")
+        @Operation(summary = "Create personal routine folder", description = "Create a new private routine folder for the user", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "201", description = "Personal routine folder created successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))),
-                        @ApiResponse(responseCode = "400", description = "Invalid routine folder data")
+                        @ApiResponse(responseCode = "400", description = "Invalid routine folder data"),
+                        @ApiResponse(responseCode = "401", description = "Authentication required")
         })
         public Mono<RoutineFolder> createPersonalRoutineFolder(
                         @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Routine folder data to create", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class), examples = @ExampleObject(value = """
@@ -173,11 +171,13 @@ public class RoutineFolderController {
                                           "equipmentType": "Gym",
                                           "workoutSplit": "Upper/Lower"
                                         }
-                                        """))) @RequestBody RoutineFolder routineFolder,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                routineFolder.setIsPublic(false);
-                routineFolder.setCreatedBy(userId);
-                return routineFolderService.save(routineFolder);
+                                        """))) @RequestBody RoutineFolder routineFolder) {
+                return authenticationService.getCurrentUserId()
+                                .flatMap(userId -> {
+                                        routineFolder.setIsPublic(false);
+                                        routineFolder.setCreatedBy(userId);
+                                        return routineFolderService.save(routineFolder);
+                                });
         }
 
         // ADMIN/SYSTEM ENDPOINTS (For creating public content)
@@ -199,43 +199,65 @@ public class RoutineFolderController {
         // GENERAL ENDPOINTS
 
         @PutMapping("/{id}")
-        @Operation(summary = "Update routine folder", description = "Update an existing routine folder (only by creator)")
+        @Operation(summary = "Update routine folder", description = "Update an existing routine folder (only by creator)", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "200", description = "Routine folder updated successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))),
-                        @ApiResponse(responseCode = "404", description = "Routine folder not found or not owned by user"),
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
+                        @ApiResponse(responseCode = "403", description = "Access denied - can only update your own routine folders"),
+                        @ApiResponse(responseCode = "404", description = "Routine folder not found"),
                         @ApiResponse(responseCode = "400", description = "Invalid routine folder data")
         })
         public Mono<ResponseEntity<RoutineFolder>> updateRoutineFolder(
                         @Parameter(description = "Routine folder ID to update", example = "507f1f77bcf86cd799439011") @PathVariable String id,
-                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated routine folder data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))) @RequestBody RoutineFolder routineFolder,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
+                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated routine folder data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))) @RequestBody RoutineFolder routineFolder) {
                 routineFolder.setId(id);
-                // Only allow updating if user is the creator
                 return routineFolderService.findById(id)
-                                .filter(existing -> existing.getCreatedBy().equals(userId))
-                                .flatMap(existing -> {
-                                        routineFolder.setCreatedBy(userId);
-                                        return routineFolderService.save(routineFolder);
-                                })
-                                .map(ResponseEntity::ok)
+                                .flatMap(existing -> authenticationService.isCurrentUser(existing.getCreatedBy())
+                                                .flatMap(isOwner -> {
+                                                        if (isOwner) {
+                                                                return authenticationService.getCurrentUserId()
+                                                                                .flatMap(userId -> {
+                                                                                        routineFolder.setCreatedBy(
+                                                                                                        userId);
+                                                                                        return routineFolderService
+                                                                                                        .save(routineFolder);
+                                                                                })
+                                                                                .map(ResponseEntity::ok);
+                                                        } else {
+                                                                return Mono.just(ResponseEntity
+                                                                                .status(HttpStatus.FORBIDDEN)
+                                                                                .<RoutineFolder>build());
+                                                        }
+                                                }))
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
                                 .doOnSuccess(response -> log.debug("Updated routine folder with id: {}", id));
         }
 
         @DeleteMapping("/{id}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
-        @Operation(summary = "Delete routine folder", description = "Delete a routine folder (only by creator)")
+        @Operation(summary = "Delete routine folder", description = "Delete a routine folder (only by creator)", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "204", description = "Routine folder deleted successfully"),
-                        @ApiResponse(responseCode = "404", description = "Routine folder not found or not owned by user")
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
+                        @ApiResponse(responseCode = "403", description = "Access denied - can only delete your own routine folders"),
+                        @ApiResponse(responseCode = "404", description = "Routine folder not found")
         })
-        public Mono<Void> deleteRoutineFolder(
-                        @Parameter(description = "Routine folder ID to delete", example = "507f1f77bcf86cd799439011") @PathVariable String id,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                // Only allow deleting if user is the creator
+        public Mono<ResponseEntity<Void>> deleteRoutineFolder(
+                        @Parameter(description = "Routine folder ID to delete", example = "507f1f77bcf86cd799439011") @PathVariable String id) {
                 return routineFolderService.findById(id)
-                                .filter(existing -> existing.getCreatedBy().equals(userId))
-                                .flatMap(existing -> routineFolderService.deleteById(id))
-                                .then();
+                                .flatMap(existing -> authenticationService.isCurrentUser(existing.getCreatedBy())
+                                                .flatMap(isOwner -> {
+                                                        if (isOwner) {
+                                                                return routineFolderService.deleteById(id)
+                                                                                .then(Mono.just(ResponseEntity
+                                                                                                .noContent()
+                                                                                                .<Void>build()));
+                                                        } else {
+                                                                return Mono.just(ResponseEntity
+                                                                                .status(HttpStatus.FORBIDDEN)
+                                                                                .<Void>build());
+                                                        }
+                                                }))
+                                .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()));
         }
 }
