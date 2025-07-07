@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.controller;
 
 import com.muscledia.workout_service.model.WorkoutPlan;
+import com.muscledia.workout_service.service.AuthenticationService;
 import com.muscledia.workout_service.service.WorkoutPlanService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +29,7 @@ import reactor.core.publisher.Mono;
 @Tag(name = "Workout Plans", description = "Workout plan templates and routines")
 public class WorkoutPlanController {
         private final WorkoutPlanService workoutPlanService;
+        private final AuthenticationService authenticationService;
 
         // PUBLIC EXPLORATION ENDPOINTS (No authentication required)
 
@@ -124,52 +127,48 @@ public class WorkoutPlanController {
 
         @PostMapping("/save/{publicId}")
         @ResponseStatus(HttpStatus.CREATED)
-        @Operation(summary = "Save workout plan to personal collection", description = "Save a public workout plan to user's personal collection")
+        @Operation(summary = "Save workout plan to personal collection", description = "Save a public workout plan to user's personal collection", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "201", description = "Workout plan saved to personal collection successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))),
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
                         @ApiResponse(responseCode = "404", description = "Public workout plan not found"),
                         @ApiResponse(responseCode = "409", description = "Workout plan already in personal collection")
         })
         public Mono<WorkoutPlan> saveToPersonalCollection(
-                        @Parameter(description = "Public workout plan ID to save", example = "507f1f77bcf86cd799439011") @PathVariable String publicId,
-                        @Parameter(description = "User ID (in real app, this would come from JWT token)", example = "12345") @RequestParam Long userId) { // In
-                                                                                                                                                          // real
-                                                                                                                                                          // app,
-                                                                                                                                                          // this
-                                                                                                                                                          // would
-                                                                                                                                                          // come
-                                                                                                                                                          // from
-                                                                                                                                                          // JWT
-                                                                                                                                                          // token
-                return workoutPlanService.saveToPersonalCollection(publicId, userId);
+                        @Parameter(description = "Public workout plan ID to save", example = "507f1f77bcf86cd799439011") @PathVariable String publicId) {
+                return authenticationService.getCurrentUserId()
+                                .flatMap(userId -> workoutPlanService.saveToPersonalCollection(publicId, userId));
         }
 
         @GetMapping("/personal")
-        @Operation(summary = "Get personal workout plans", description = "Retrieve all workout plans in user's personal collection")
+        @Operation(summary = "Get personal workout plans", description = "Retrieve all workout plans in user's personal collection", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
-                        @ApiResponse(responseCode = "200", description = "Personal workout plans retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = WorkoutPlan.class))))
+                        @ApiResponse(responseCode = "200", description = "Personal workout plans retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = WorkoutPlan.class)))),
+                        @ApiResponse(responseCode = "401", description = "Authentication required")
         })
-        public Flux<WorkoutPlan> getPersonalWorkoutPlans(
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                return workoutPlanService.findPersonalWorkoutPlans(userId);
+        public Flux<WorkoutPlan> getPersonalWorkoutPlans() {
+                return authenticationService.getCurrentUserId()
+                                .flatMapMany(workoutPlanService::findPersonalWorkoutPlans);
         }
 
         @GetMapping("/my-created")
-        @Operation(summary = "Get user-created workout plans", description = "Retrieve workout plans created by the user")
+        @Operation(summary = "Get user-created workout plans", description = "Retrieve workout plans created by the user", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
-                        @ApiResponse(responseCode = "200", description = "User-created workout plans retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = WorkoutPlan.class))))
+                        @ApiResponse(responseCode = "200", description = "User-created workout plans retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = WorkoutPlan.class)))),
+                        @ApiResponse(responseCode = "401", description = "Authentication required")
         })
-        public Flux<WorkoutPlan> getMyCreatedWorkoutPlans(
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                return workoutPlanService.findByCreator(userId);
+        public Flux<WorkoutPlan> getMyCreatedWorkoutPlans() {
+                return authenticationService.getCurrentUserId()
+                                .flatMapMany(workoutPlanService::findByCreator);
         }
 
         @PostMapping("/personal")
         @ResponseStatus(HttpStatus.CREATED)
-        @Operation(summary = "Create personal workout plan", description = "Create a new private workout plan for the user")
+        @Operation(summary = "Create personal workout plan", description = "Create a new private workout plan for the user", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "201", description = "Personal workout plan created successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))),
-                        @ApiResponse(responseCode = "400", description = "Invalid workout plan data")
+                        @ApiResponse(responseCode = "400", description = "Invalid workout plan data"),
+                        @ApiResponse(responseCode = "401", description = "Authentication required")
         })
         public Mono<WorkoutPlan> createPersonalWorkoutPlan(
                         @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Workout plan data to create", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class), examples = @ExampleObject(value = """
@@ -190,11 +189,13 @@ public class WorkoutPlanController {
                                             }
                                           ]
                                         }
-                                        """))) @RequestBody WorkoutPlan workoutPlan,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                workoutPlan.setIsPublic(false);
-                workoutPlan.setCreatedBy(userId);
-                return workoutPlanService.save(workoutPlan);
+                                        """))) @RequestBody WorkoutPlan workoutPlan) {
+                return authenticationService.getCurrentUserId()
+                                .flatMap(userId -> {
+                                        workoutPlan.setIsPublic(false);
+                                        workoutPlan.setCreatedBy(userId);
+                                        return workoutPlanService.save(workoutPlan);
+                                });
         }
 
         // ADMIN/SYSTEM ENDPOINTS (For creating public content)
@@ -216,43 +217,65 @@ public class WorkoutPlanController {
         // GENERAL ENDPOINTS
 
         @PutMapping("/{id}")
-        @Operation(summary = "Update workout plan", description = "Update an existing workout plan (only by creator)")
+        @Operation(summary = "Update workout plan", description = "Update an existing workout plan (only by creator)", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "200", description = "Workout plan updated successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))),
-                        @ApiResponse(responseCode = "404", description = "Workout plan not found or not owned by user"),
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
+                        @ApiResponse(responseCode = "403", description = "Access denied - can only update your own workout plans"),
+                        @ApiResponse(responseCode = "404", description = "Workout plan not found"),
                         @ApiResponse(responseCode = "400", description = "Invalid workout plan data")
         })
         public Mono<ResponseEntity<WorkoutPlan>> updateWorkoutPlan(
                         @Parameter(description = "Workout plan ID to update", example = "507f1f77bcf86cd799439011") @PathVariable String id,
-                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated workout plan data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))) @RequestBody WorkoutPlan workoutPlan,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
+                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated workout plan data", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))) @RequestBody WorkoutPlan workoutPlan) {
                 workoutPlan.setId(id);
-                // Only allow updating if user is the creator
                 return workoutPlanService.findById(id)
-                                .filter(existing -> existing.getCreatedBy().equals(userId))
-                                .flatMap(existing -> {
-                                        workoutPlan.setCreatedBy(userId);
-                                        return workoutPlanService.save(workoutPlan);
-                                })
-                                .map(ResponseEntity::ok)
+                                .flatMap(existing -> authenticationService.isCurrentUser(existing.getCreatedBy())
+                                                .flatMap(isOwner -> {
+                                                        if (isOwner) {
+                                                                return authenticationService.getCurrentUserId()
+                                                                                .flatMap(userId -> {
+                                                                                        workoutPlan.setCreatedBy(
+                                                                                                        userId);
+                                                                                        return workoutPlanService.save(
+                                                                                                        workoutPlan);
+                                                                                })
+                                                                                .map(ResponseEntity::ok);
+                                                        } else {
+                                                                return Mono.just(ResponseEntity
+                                                                                .status(HttpStatus.FORBIDDEN)
+                                                                                .<WorkoutPlan>build());
+                                                        }
+                                                }))
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
                                 .doOnSuccess(response -> log.debug("Updated workout plan with id: {}", id));
         }
 
         @DeleteMapping("/{id}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
-        @Operation(summary = "Delete workout plan", description = "Delete a workout plan (only by creator)")
+        @Operation(summary = "Delete workout plan", description = "Delete a workout plan (only by creator)", security = @SecurityRequirement(name = "bearer-key"))
         @ApiResponses(value = {
                         @ApiResponse(responseCode = "204", description = "Workout plan deleted successfully"),
-                        @ApiResponse(responseCode = "404", description = "Workout plan not found or not owned by user")
+                        @ApiResponse(responseCode = "401", description = "Authentication required"),
+                        @ApiResponse(responseCode = "403", description = "Access denied - can only delete your own workout plans"),
+                        @ApiResponse(responseCode = "404", description = "Workout plan not found")
         })
-        public Mono<Void> deleteWorkoutPlan(
-                        @Parameter(description = "Workout plan ID to delete", example = "507f1f77bcf86cd799439011") @PathVariable String id,
-                        @Parameter(description = "User ID", example = "12345") @RequestParam Long userId) {
-                // Only allow deleting if user is the creator
+        public Mono<ResponseEntity<Void>> deleteWorkoutPlan(
+                        @Parameter(description = "Workout plan ID to delete", example = "507f1f77bcf86cd799439011") @PathVariable String id) {
                 return workoutPlanService.findById(id)
-                                .filter(existing -> existing.getCreatedBy().equals(userId))
-                                .flatMap(existing -> workoutPlanService.deleteById(id))
-                                .then();
+                                .flatMap(existing -> authenticationService.isCurrentUser(existing.getCreatedBy())
+                                                .flatMap(isOwner -> {
+                                                        if (isOwner) {
+                                                                return workoutPlanService.deleteById(id)
+                                                                                .then(Mono.just(ResponseEntity
+                                                                                                .noContent()
+                                                                                                .<Void>build()));
+                                                        } else {
+                                                                return Mono.just(ResponseEntity
+                                                                                .status(HttpStatus.FORBIDDEN)
+                                                                                .<Void>build());
+                                                        }
+                                                }))
+                                .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()));
         }
 }
