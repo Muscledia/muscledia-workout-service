@@ -1,132 +1,71 @@
 package com.muscledia.workout_service.service;
 
-import com.muscledia.workout_service.config.JwtProperties;
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
-import java.util.Date;
-import java.util.List;
-import java.util.function.Function;
+import java.util.*;
 
 @Service
 @Slf4j
 public class JwtService {
 
-    private final JwtProperties jwtProperties;
-    private final SecretKey signingKey;
+    @Value("${jwt.secret}")
+    private String secretKey;
 
-    public JwtService(JwtProperties jwtProperties) {
-        this.jwtProperties = jwtProperties;
-        byte[] keyBytes = Decoders.BASE64.decode(jwtProperties.getSecret());
-        this.signingKey = Keys.hmacShaKeyFor(keyBytes);
-    }
+    @Value("${jwt.issuer}")
+    private String issuer;
 
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
-
-    public Long extractUserId(String token) {
-        Claims claims = extractClaims(token);
-        Object userIdClaim = claims.get("userId");
-        if (userIdClaim instanceof Number) {
-            return ((Number) userIdClaim).longValue();
-        } else if (userIdClaim instanceof String) {
-            return Long.parseLong((String) userIdClaim);
-        }
-        return null;
-    }
-
-    public String extractEmail(String token) {
-        return (String) extractClaims(token).get("email");
-    }
-
-    @SuppressWarnings("unchecked")
-    public List<String> extractRoles(String token) {
-        Claims claims = extractClaims(token);
-        Object rolesClaim = claims.get("roles");
-        if (rolesClaim instanceof List) {
-            return (List<String>) rolesClaim;
-        }
-        return List.of();
-    }
-
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
-    }
-
-    public String extractIssuer(String token) {
-        return extractClaim(token, Claims::getIssuer);
-    }
-
-    public Claims extractClaims(String token) {
-        try {
-            return Jwts.parser()
-                    .verifyWith(signingKey)
-                    .build()
-                    .parseSignedClaims(token)
-                    .getPayload();
-        } catch (JwtException e) {
-            log.error("Failed to parse JWT token: {}", e.getMessage());
-            throw e;
-        }
-    }
-
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        Claims claims = extractClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    public boolean isTokenExpired(String token) {
-        try {
-            return extractExpiration(token).before(new Date());
-        } catch (JwtException e) {
-            log.warn("Token validation failed: {}", e.getMessage());
-            return true;
-        }
-    }
-
-    public boolean validateToken(String token, String username) {
-        return extractUsername(token).equals(username) && !isTokenExpired(token);
+    private SecretKey getSigningKey() {
+        byte[] keyBytes = Base64.getDecoder().decode(secretKey);
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 
     public boolean validateToken(String token) {
         try {
-            Claims claims = extractClaims(token);
-
-            if (isTokenExpired(token)) {
-                log.warn("Token is expired");
-                return false;
-            }
-
-            if (jwtProperties.getIssuer() != null && !jwtProperties.getIssuer().equals(claims.getIssuer())) {
-                log.warn("Token issuer mismatch. Expected: {}, Found: {}", jwtProperties.getIssuer(),
-                        claims.getIssuer());
-                return false;
-            }
-
+            Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .requireIssuer(issuer)
+                    .build()
+                    .parseSignedClaims(token);
             return true;
-        } catch (JwtException e) {
+        } catch (Exception e) {
             log.error("JWT validation failed: {}", e.getMessage());
             return false;
         }
     }
 
-    public boolean hasRole(String token, String role) {
-        List<String> roles = extractRoles(token);
-        return roles.contains(role);
+    public Claims extractClaims(String token) {
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
-    public boolean hasAnyRole(String token, String... roles) {
-        List<String> userRoles = extractRoles(token);
-        for (String role : roles) {
-            if (userRoles.contains(role)) {
-                return true;
-            }
-        }
-        return false;
+    public String extractUsername(String token) {
+        return extractClaims(token).getSubject();
+    }
+
+    public Long extractUserId(String token) {
+        return extractClaims(token).get("userId", Long.class);
+    }
+
+    public String extractRole(String token) {
+        return extractClaims(token).get("role", String.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Set<String> extractPermissions(String token) {
+        List<String> permissions = extractClaims(token).get("permissions", List.class);
+        return new HashSet<>(permissions != null ? permissions : Collections.emptyList());
+    }
+
+    public boolean isTokenExpired(String token) {
+        return extractClaims(token).getExpiration().before(new Date());
     }
 }
