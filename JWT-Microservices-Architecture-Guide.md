@@ -7,7 +7,7 @@
 - **User Service**: JWT creation, user authentication, token refresh (Servlet-based)
 - **API Gateway** (Optional): Central routing, header injection, rate limiting
 - **Workout Service**: JWT validation, user context extraction, authorization (Reactive WebFlux) ✅
-- **Gamification Service**: JWT validation, user context extraction, authorization (Reactive WebFlux)
+- **Gamification Service**: JWT validation, user context extraction, authorization (Servlet-based)
 
 ## 📋 Implementation Steps
 
@@ -139,7 +139,7 @@ public class AuthController {
 }
 ```
 
-### 3️⃣ **🔥 CRITICAL: Reactive Services Implementation (WebFlux) - YOUR CURRENT PATTERN**
+### 3️⃣ **🔥 CRITICAL: Workout Service Implementation (Reactive WebFlux) - YOUR CURRENT PATTERN**
 
 #### JWT Authentication Web Filter (REACTIVE - Keep Your Current Implementation ✅)
 
@@ -252,79 +252,199 @@ public class UserPrincipal {
 }
 ```
 
-### 4️⃣ **Security Configuration - REACTIVE (Keep Your Current ✅)**
+### 4️⃣ **Servlet-based Services Implementation (User Service & Gamification Service)**
+
+#### JWT Authentication Filter (SERVLET - Standard Spring Security)
+
+```java
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtUtil jwtUtil;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
+
+        String authHeader = request.getHeader("Authorization");
+
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        String token = authHeader.substring(7);
+
+        if (!jwtUtil.validateToken(token)) {
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.getWriter().write("{\"error\": \"Invalid token\"}");
+            return;
+        }
+
+        Long userId = jwtUtil.extractUserId(token);
+        String username = jwtUtil.extractUsername(token);
+        String role = jwtUtil.extractRole(token);
+        Set<String> permissions = jwtUtil.extractPermissions(token);
+
+        UserPrincipal principal = new UserPrincipal(userId, username, role, permissions);
+
+        Collection<SimpleGrantedAuthority> authorities = permissions.stream()
+                .map(permission -> new SimpleGrantedAuthority("PERMISSION_" + permission))
+                .collect(Collectors.toList());
+
+        authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(principal, null, authorities);
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        filterChain.doFilter(request, response);
+    }
+}
+```
+
+#### Authentication Service (SERVLET - Standard Spring MVC)
+
+```java
+@Service
+@RequiredArgsConstructor
+public class AuthenticationService {
+
+    public Long getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new UnauthorizedException("No authenticated user found");
+        }
+
+        UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
+        return principal.getUserId();
+    }
+
+    public UserPrincipal getCurrentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new UnauthorizedException("No authenticated user found");
+        }
+
+        return (UserPrincipal) authentication.getPrincipal();
+    }
+
+    public boolean hasPermission(String permission) {
+        return getCurrentUser().hasPermission(permission);
+    }
+}
+```
+
+### 5️⃣ **Security Configuration Comparison**
+
+#### Reactive (Workout Service) ✅
 
 ```java
 @Configuration
 @EnableWebFluxSecurity
 @EnableReactiveMethodSecurity
+public class SecurityConfig {
+    // Your current implementation - KEEP AS IS
+}
+```
+
+#### Servlet (User Service & Gamification Service)
+
+```java
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthenticationWebFilter jwtAuthenticationWebFilter;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     @Bean
-    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
-                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .authorizeExchange(exchanges -> exchanges
+                .authorizeHttpRequests(auth -> auth
                         // Public endpoints
-                        .pathMatchers("/api/v1/exercises/**").permitAll()
-                        .pathMatchers("/api/v1/muscle-groups/**").permitAll()
-                        .pathMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
 
                         // Admin endpoints
-                        .pathMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
                         // Protected endpoints
-                        .anyExchange().authenticated())
-                .exceptionHandling(exceptions -> exceptions
+                        .anyRequest().authenticated())
+                .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(jwtAuthenticationEntryPoint))
-                .addFilterBefore(jwtAuthenticationWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 }
 ```
 
-### 5️⃣ **🔥 CRITICAL: Controller Implementation - REACTIVE (Use Your Current Pattern)**
+### 6️⃣ **🔥 CRITICAL: Controller Implementation Patterns**
 
-#### ❌ WRONG (Servlet-based from guide):
+#### ✅ REACTIVE (Workout Service Only - Your Current Pattern):
 
 ```java
-// DON'T USE THIS - This is servlet-based
-@GetMapping
-public ResponseEntity<List<WorkoutDto>> getUserWorkouts(Authentication authentication) {
-    UserPrincipal user = (UserPrincipal) authentication.getPrincipal();
-    List<WorkoutDto> workouts = workoutService.getUserWorkouts(user.getUserId());
-    return ResponseEntity.ok(workouts);
+// WORKOUT SERVICE - Reactive pattern with Mono/Flux
+@RestController
+@RequestMapping("/api/v1/workouts")
+public class WorkoutController {
+
+    @GetMapping
+    public Flux<WorkoutResponse> getUserWorkouts() {
+        return authenticationService.getCurrentUserId()
+                .flatMapMany(workoutService::getUserWorkouts);
+    }
+
+    @PostMapping
+    public Mono<WorkoutResponse> createWorkout(@RequestBody CreateWorkoutRequest request) {
+        return authenticationService.getCurrentUserId()
+                .flatMap(userId -> workoutService.createWorkout(request, userId));
+    }
+
+    @PreAuthorize("@workoutService.isWorkoutOwner(#workoutId, #userId)")
+    @PutMapping("/{workoutId}")
+    public Mono<WorkoutResponse> updateWorkout(
+            @PathVariable String workoutId,
+            @RequestBody UpdateWorkoutRequest request) {
+        return authenticationService.getCurrentUserId()
+                .flatMap(userId -> workoutService.updateWorkout(workoutId, request, userId));
+    }
 }
 ```
 
-#### ✅ CORRECT (Reactive - Your Current Pattern):
+#### ✅ SERVLET (User Service & Gamification Service):
 
 ```java
-// USE THIS - This is reactive and matches your current implementation
-@GetMapping
-public Flux<WorkoutResponse> getUserWorkouts() {
-    return authenticationService.getCurrentUserId()
-            .flatMapMany(workoutService::getUserWorkouts);
-}
+// USER SERVICE & GAMIFICATION SERVICE - Standard servlet pattern
+@RestController
+@RequestMapping("/api/v1/auth")
+public class AuthController {
 
-@PostMapping
-public Mono<WorkoutResponse> createWorkout(@RequestBody CreateWorkoutRequest request) {
-    return authenticationService.getCurrentUserId()
-            .flatMap(userId -> workoutService.createWorkout(request, userId));
-}
+    @GetMapping("/profile")
+    public ResponseEntity<UserProfile> getUserProfile(Authentication authentication) {
+        UserPrincipal user = (UserPrincipal) authentication.getPrincipal();
+        UserProfile profile = userService.getUserProfile(user.getUserId());
+        return ResponseEntity.ok(profile);
+    }
 
-@PreAuthorize("@workoutService.isWorkoutOwner(#workoutId, #userId)")
-@PutMapping("/{workoutId}")
-public Mono<WorkoutResponse> updateWorkout(
-        @PathVariable String workoutId,
-        @RequestBody UpdateWorkoutRequest request) {
-    return authenticationService.getCurrentUserId()
-            .flatMap(userId -> workoutService.updateWorkout(workoutId, request, userId));
+    @PostMapping("/login")
+    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
+        AuthResponse response = authService.authenticate(request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PreAuthorize("hasPermission('ADMIN_ACCESS')")
+    @GetMapping("/admin/users")
+    public ResponseEntity<List<UserDto>> getAllUsers() {
+        List<UserDto> users = userService.getAllUsers();
+        return ResponseEntity.ok(users);
+    }
 }
 ```
 
@@ -388,16 +508,34 @@ spring:
                 value: "#{@jwtUtil.extractUserId(request.headers['Authorization'][0])}"
 ```
 
-## 📊 Comparison: Your Current vs Examples
+## 📊 Comparison: Reactive vs Servlet Implementations
 
-| Aspect              | Your Current (Reactive)          | Examples Shown (Servlet)            |
-| ------------------- | -------------------------------- | ----------------------------------- |
-| **Framework**       | ✅ Spring WebFlux                | Spring MVC                          |
-| **Filter Type**     | ✅ WebFilter                     | OncePerRequestFilter                |
-| **Security Config** | ✅ @EnableWebFluxSecurity        | @EnableWebSecurity                  |
-| **Authentication**  | ✅ JwtAuthenticationToken        | UsernamePasswordAuthenticationToken |
-| **Context**         | ✅ ReactiveSecurityContextHolder | SecurityContextHolder               |
-| **Return Types**    | ✅ Mono/Flux                     | ResponseEntity/List                 |
+| Aspect              | Workout Service (Reactive)       | User/Gamification Services (Servlet) |
+| ------------------- | -------------------------------- | ------------------------------------ |
+| **Framework**       | ✅ Spring WebFlux                | Spring MVC                           |
+| **Filter Type**     | ✅ WebFilter                     | OncePerRequestFilter                 |
+| **Security Config** | ✅ @EnableWebFluxSecurity        | @EnableWebSecurity                   |
+| **Authentication**  | ✅ JwtAuthenticationToken        | UsernamePasswordAuthenticationToken  |
+| **Context**         | ✅ ReactiveSecurityContextHolder | SecurityContextHolder                |
+| **Return Types**    | ✅ Mono/Flux                     | ResponseEntity/List                  |
+| **Auth Service**    | ✅ Reactive (Mono-based)         | Synchronous                          |
+
+## ✅ Architecture Summary
+
+**Workout Service (Your Current Implementation):**
+
+- ✅ Reactive architecture with Spring WebFlux
+- ✅ Proper JWT validation using WebFilter
+- ✅ ReactiveSecurityContextHolder for user context
+- ✅ Mono/Flux controllers with async operations
+- ✅ Production-ready and follows best practices
+
+**User Service & Gamification Service (Standard Servlet):**
+
+- ✅ Traditional Spring MVC with servlet filters
+- ✅ Standard Spring Security configuration
+- ✅ Synchronous controllers with ResponseEntity
+- ✅ SecurityContextHolder for user context
 
 ## ✅ Your Implementation Status
 

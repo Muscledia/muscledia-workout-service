@@ -99,7 +99,7 @@ Your service now properly fits into the microservices JWT architecture:
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │  User Service   │    │ Workout Service │    │Gamification Svc │
-│   (Servlet)     │    │   (Reactive)    │    │   (Reactive)    │
+│   (Servlet)     │    │   (Reactive)    │    │   (Servlet)     │
 │                 │    │                 │    │                 │
 │ • JWT Creation  │    │ • JWT Validation│    │ • JWT Validation│
 │ • Authentication│◄──►│ • User Context  │◄──►│ • User Context  │
@@ -152,8 +152,9 @@ jwt:
    - Create authentication endpoints
    - Handle user registration/login
 
-4. **Replicate Pattern for Gamification Service**
-   - Copy the reactive JWT pattern from workout service
+4. **Implement Servlet-based JWT for Gamification Service**
+   - Use standard Spring Security servlet-based JWT pattern
+   - Follow User Service authentication approach
    - Adjust for gamification-specific permissions
 
 ## ✅ **Verification Checklist**
