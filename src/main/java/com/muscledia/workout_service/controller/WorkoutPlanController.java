@@ -42,7 +42,7 @@ public class WorkoutPlanController {
         public Mono<ResponseEntity<WorkoutPlan>> getPublicWorkoutPlan(
                         @Parameter(description = "Workout plan ID", example = "507f1f77bcf86cd799439011") @PathVariable String id) {
                 return workoutPlanService.findById(id)
-                                .filter(plan -> plan.getIsPublic()) // Only return if public
+                                .filter(WorkoutPlan::getIsPublic) // Only return if public
                                 .map(ResponseEntity::ok)
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
                                 .doOnSuccess(response -> log.debug("Retrieved public workout plan with id: {}", id));
@@ -97,7 +97,7 @@ public class WorkoutPlanController {
         public Flux<WorkoutPlan> getPublicWorkoutPlansByMuscleGroup(
                         @Parameter(description = "Target muscle group", example = "chest") @PathVariable String muscleGroup) {
                 return workoutPlanService.findByTargetMuscleGroup(muscleGroup)
-                                .filter(plan -> plan.getIsPublic()); // Only return public plans
+                                .filter(WorkoutPlan::getIsPublic); // Only return public plans
         }
 
         @GetMapping("/public/equipment/{equipment}")
@@ -108,7 +108,7 @@ public class WorkoutPlanController {
         public Flux<WorkoutPlan> getPublicWorkoutPlansByEquipment(
                         @Parameter(description = "Required equipment type", example = "barbell") @PathVariable String equipment) {
                 return workoutPlanService.findByRequiredEquipment(equipment)
-                                .filter(plan -> plan.getIsPublic()); // Only return public plans
+                                .filter(WorkoutPlan::getIsPublic); // Only return public plans
         }
 
         @GetMapping("/public/duration")
@@ -120,7 +120,7 @@ public class WorkoutPlanController {
                         @Parameter(description = "Minimum duration in minutes", example = "30") @RequestParam Integer minDuration,
                         @Parameter(description = "Maximum duration in minutes", example = "60") @RequestParam Integer maxDuration) {
                 return workoutPlanService.findByDurationRange(minDuration, maxDuration)
-                                .filter(plan -> plan.getIsPublic()); // Only return public plans
+                                .filter(WorkoutPlan::getIsPublic); // Only return public plans
         }
 
         // PERSONAL COLLECTION ENDPOINTS (Authentication required)

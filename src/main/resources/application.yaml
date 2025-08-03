@@ -6,19 +6,57 @@ spring:
     name: workout-service
   data:
     mongodb:
-      uri: mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/muscledia_workouts?retryWrites=true&w=majority&appName=Cluster0
-      database: muscledia_workouts
+      uri: ${MONGODB_URI:mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&connectTimeoutMS=20000&socketTimeoutMS=20000&maxIdleTimeMS=120000&maxLifeTimeMS=120000}
+      database: ${MONGODB_DATABASE:muscledia_workouts} # Dedicated database for workout service
+      auto-index-creation: true
+
+    # Kafka Producer Configuration
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092} # Connects to the same Kafka broker
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # Producer configuration for reliability and performance:
+      acks: all # Guarantees message delivery
+      retries: 3 # Number of retries for failed sends
+      batch-size: 16384 # Default batch size (16KB)
+      linger.ms: 5 # Time to wait before sending a batch
+      # Idempotent producer for exactly-once delivery (important for robustness)
+      properties:
+        enable.idempotence: true
+      # transaction-id-prefix is needed if you implement the outbox pattern in this service
+      transaction-id-prefix: ${KAFKA_PRODUCER_TX_PREFIX:workout-service-tx-}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:workout-service-consumer} # Unique consumer group ID
+      auto-offset-reset: earliest # Or 'latest', depending on your desired behavior
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer # Good for robust deserialization
+      properties:
+        spring.json.trusted.packages: "com.muscledia.workout_service.event.*, com.muscledia.Gamification_service.event.*, com.muscledia.user_service.event.*" # IMPORTANT: Add packages of event DTOs this service consumes
 
 eureka:
   client:
     service-url:
       defaultZone: http://localhost:8761/eureka # Point to Eureka Server
 
+# Monitoring
 management:
   endpoints:
     web:
       exposure:
-        include: health # Expose the health endpoint for Eureka and monitoring
+        include: ${ACTUATOR_ENDPOINTS:health,info}
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Logging
+logging:
+  level:
+    com.muscledia.workout_service: ${LOG_LEVEL:INFO} # Adjust package name
+    org.springframework: WARN
+    org.springframework.data.mongodb: DEBUG
+    com.mongodb: DEBUG
+    kafka: ${KAFKA_LOG_LEVEL:OFF}
 
 # SpringDoc OpenAPI Configuration
 springdoc:
@@ -49,15 +87,15 @@ api:
   hevy:
     base-url: https://api.hevyapp.com
     version: v1
-    api-key: ${HEVY_API_KEY:879a3ffd-2482-4bd4-92af-b54d3b8c65f5}
+    api-key: ${HEVY_API_KEY:f2c9f484-9481-442c-bab9-905d2bd338a3}
     routines-page-size: 10
     routine-folders-page-size: 10
-    max-routines-pages: 6
-    max-routine-folders-pages: 2
+    max-routines-pages: 10
+    max-routine-folders-pages: 3
 
 # JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:1e5bf199c6450231fdd242f60485d0caadc32aa27a0d89da7174aed38326a879}
+  secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
   expiration: ${JWT_EXPIRATION:86400000} # 24 hours in milliseconds
   issuer: ${JWT_ISSUER:muscledia-user-service}
 

@@ -29,7 +29,7 @@ public class JwtService {
         try {
             Jwts.parser()
                     .verifyWith(getSigningKey())
-                    .requireIssuer(issuer)
+                    //.requireIssuer(issuer)
                     .build()
                     .parseSignedClaims(token);
             return true;

@@ -8,6 +8,7 @@ import jakarta.validation.ConstraintValidatorContext;
 import lombok.extern.slf4j.Slf4j;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
@@ -83,22 +84,36 @@ public class WorkoutValidator implements ConstraintValidator<ValidWorkout, Objec
                 }
 
                 // Validate reasonable weight-to-reps ratio
-                if (exercise.getWeight() != null && exercise.getReps() != null) {
-                    BigDecimal weightPerRep = exercise.getWeight().divide(BigDecimal.valueOf(exercise.getReps()), 2,
-                            BigDecimal.ROUND_HALF_UP);
+                // FIX: Convert exercise.getWeight() to BigDecimal before division
+                if (exercise.getWeight() != null && exercise.getReps() != null && exercise.getReps() > 0) { // Add check for reps > 0 to avoid division by zero
+                    BigDecimal weightBigDecimal = BigDecimal.valueOf(exercise.getWeight());
+                    BigDecimal repsBigDecimal = BigDecimal.valueOf(exercise.getReps());
+                    BigDecimal weightPerRep = weightBigDecimal.divide(repsBigDecimal, 2, RoundingMode.HALF_UP); // Use RoundingMode
+
                     if (weightPerRep.compareTo(BigDecimal.valueOf(1000)) > 0) {
                         context.buildConstraintViolationWithTemplate("Weight per rep seems unrealistic (over 1000)")
                                 .addPropertyNode("exercises[" + i + "].weight")
                                 .addConstraintViolation();
                         isValid = false;
                     }
+                } else if (exercise.getWeight() != null && exercise.getReps() != null && exercise.getReps() == 0) {
+                    // Handle case where reps is 0 if needed, e.g., it's an invalid state for a workout exercise
+                    context.buildConstraintViolationWithTemplate("Reps cannot be zero for an exercise")
+                            .addPropertyNode("exercises[" + i + "].reps")
+                            .addConstraintViolation();
+                    isValid = false;
                 }
 
                 // Validate reasonable volume per exercise
+                // FIX: Convert exercise.getWeight() to BigDecimal before multiplication
                 if (exercise.getWeight() != null && exercise.getReps() != null && exercise.getSets() != null) {
-                    BigDecimal exerciseVolume = exercise.getWeight()
-                            .multiply(BigDecimal.valueOf(exercise.getReps()))
-                            .multiply(BigDecimal.valueOf(exercise.getSets()));
+                    BigDecimal weightBigDecimal = BigDecimal.valueOf(exercise.getWeight());
+                    BigDecimal repsBigDecimal = BigDecimal.valueOf(exercise.getReps());
+                    BigDecimal setsBigDecimal = BigDecimal.valueOf(exercise.getSets());
+
+                    BigDecimal exerciseVolume = weightBigDecimal
+                            .multiply(repsBigDecimal)
+                            .multiply(setsBigDecimal);
 
                     if (exerciseVolume.compareTo(BigDecimal.valueOf(100000)) > 0) {
                         context.buildConstraintViolationWithTemplate("Exercise volume seems unrealistic (over 100,000)")
@@ -146,10 +161,14 @@ public class WorkoutValidator implements ConstraintValidator<ValidWorkout, Objec
     }
 
     private BigDecimal calculateTotalVolume(List<WorkoutExerciseRequest> exercises) {
+        if (exercises == null || exercises.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
         return exercises.stream()
                 .filter(exercise -> exercise.getWeight() != null && exercise.getReps() != null
                         && exercise.getSets() != null)
-                .map(exercise -> exercise.getWeight()
+                .map(exercise -> BigDecimal.valueOf(exercise.getWeight()) // FIX: Convert Double to BigDecimal
                         .multiply(BigDecimal.valueOf(exercise.getReps()))
                         .multiply(BigDecimal.valueOf(exercise.getSets())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

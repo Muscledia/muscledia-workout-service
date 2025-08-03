@@ -5,6 +5,7 @@ import com.muscledia.workout_service.exception.UnauthorizedException;
 import com.muscledia.workout_service.security.JwtAuthenticationToken;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.stereotype.Service;
@@ -16,21 +17,47 @@ import reactor.core.publisher.Mono;
 public class AuthenticationService {
 
     public Mono<Long> getCurrentUserId() {
+        // This is where you would get the NullPointerException. We prevent it below.
         return ReactiveSecurityContextHolder.getContext()
-                .map(SecurityContext::getAuthentication)
-                .cast(JwtAuthenticationToken.class)
-                .map(auth -> ((UserPrincipal) auth.getPrincipal()).getUserId())
-                .doOnNext(userId -> log.debug("Current user ID: {}", userId))
-                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user found")));
+                .mapNotNull(context -> {
+                    Authentication authentication = context.getAuthentication();
+                    if (authentication instanceof JwtAuthenticationToken jwtAuthToken) {
+                        Object principal = jwtAuthToken.getPrincipal();
+                        if (principal instanceof UserPrincipal userPrincipal) {
+                            log.debug("Current user ID: {}", userPrincipal.getUserId());
+                            return userPrincipal.getUserId();
+                        } else {
+                            log.warn("Authentication principal is not UserPrincipal: {}", principal);
+                            return null; // Return null if not expected type
+                        }
+                    } else {
+                        log.warn("Authentication is not JwtAuthenticationToken: {}", authentication);
+                        return null; // Return null if not a JWT token
+                    }
+                })
+                .flatMap(Mono::justOrEmpty)
+                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user or invalid token.")));
     }
 
     public Mono<UserPrincipal> getCurrentUser() {
         return ReactiveSecurityContextHolder.getContext()
                 .map(SecurityContext::getAuthentication)
-                .cast(JwtAuthenticationToken.class)
-                .map(auth -> (UserPrincipal) auth.getPrincipal())
-                .doOnNext(user -> log.debug("Current user: {} with role: {}", user.getUsername(), user.getRole()))
-                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user found")));
+                .flatMap(authentication -> { // Use flatMap here too
+                    if (authentication instanceof JwtAuthenticationToken jwtAuthToken) {
+                        Object principal = jwtAuthToken.getPrincipal();
+                        if (principal instanceof UserPrincipal userPrincipal) {
+                            log.debug("Current user: {} with role: {}", userPrincipal.getUsername(), userPrincipal.getRole());
+                            return Mono.just(userPrincipal);
+                        } else {
+                            log.warn("Authentication principal is not UserPrincipal: {}", principal);
+                            return Mono.empty();
+                        }
+                    } else {
+                        log.warn("Authentication is not JwtAuthenticationToken: {}", authentication.getClass().getName());
+                        return Mono.empty();
+                    }
+                })
+                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user or invalid principal found")));
     }
 
     public Mono<String> getCurrentUsername() {

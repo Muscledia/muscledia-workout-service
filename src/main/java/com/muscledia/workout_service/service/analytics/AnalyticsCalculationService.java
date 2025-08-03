@@ -122,7 +122,7 @@ public class AnalyticsCalculationService {
 
         // Count unique sessions
         int sessionsCount = (int) exercises.stream()
-                .collect(Collectors.groupingBy(e -> e.getExerciseId())) // This would need workout date grouping
+                .collect(Collectors.groupingBy(WorkoutExercise::getExerciseId)) // This would need workout date grouping
                 .size();
         analytics.setSessionsCount(sessionsCount);
 
@@ -133,20 +133,25 @@ public class AnalyticsCalculationService {
 
         // Weight statistics
         BigDecimal maxWeight = exercises.stream()
-                .map(WorkoutExercise::getWeight)
-                .max(BigDecimal::compareTo)
+                .map(WorkoutExercise::getWeight) // This gets a Double or Number
+                .filter(Objects::nonNull) // Ensure no null weights
+                .map(BigDecimal::valueOf) // Convert Double/Number to BigDecimal
+                .max(BigDecimal::compareTo) // Now compareTo can be applied to BigDecimal
                 .orElse(BigDecimal.ZERO);
         analytics.setMaxWeight(maxWeight);
 
         BigDecimal avgWeight = exercises.stream()
                 .map(WorkoutExercise::getWeight)
+                .filter(Objects::nonNull) // Filter out null weights
+                .map(BigDecimal::valueOf) // Convert Double/Number to BigDecimal
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .divide(BigDecimal.valueOf(exercises.size()), 2, RoundingMode.HALF_UP);
         analytics.setAverageWeight(avgWeight);
 
         // 1RM estimation (using Epley formula: weight * (1 + reps/30))
         BigDecimal estimated1RM = exercises.stream()
-                .map(this::calculate1RM)
+                .filter(exercise -> exercise.getWeight() != null && exercise.getReps() != null) // Ensure no nulls
+                .map(this::calculate1RM) // This already handles conversion, assuming calculate1RM is fixed
                 .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
         analytics.setEstimated1RM(estimated1RM);
@@ -246,16 +251,29 @@ public class AnalyticsCalculationService {
     }
 
     private BigDecimal calculateExerciseVolume(WorkoutExercise exercise) {
-        return exercise.getWeight()
+        if (exercise.getWeight() == null || exercise.getSets() == null || exercise.getReps() == null) {
+            return BigDecimal.ZERO; // Handle null values gracefully
+        }
+        return BigDecimal.valueOf(exercise.getWeight()) // Convert to BigDecimal
                 .multiply(BigDecimal.valueOf(exercise.getSets()))
                 .multiply(BigDecimal.valueOf(exercise.getReps()));
     }
 
     private BigDecimal calculate1RM(WorkoutExercise exercise) {
         // Epley formula: weight * (1 + reps/30)
+        if (exercise.getWeight() == null || exercise.getReps() == null) {
+            return BigDecimal.ZERO; // Handle null values
+        }
+        int reps = exercise.getReps(); // Ensure reps is int
+        BigDecimal weight = BigDecimal.valueOf(exercise.getWeight()); // Convert to BigDecimal
+
+        if (reps == 1)
+            return weight;
+
+        // Epley formula: weight * (1 + reps/30)
         BigDecimal multiplier = BigDecimal.ONE.add(
-                BigDecimal.valueOf(exercise.getReps()).divide(BigDecimal.valueOf(30), 4, RoundingMode.HALF_UP));
-        return exercise.getWeight().multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal.valueOf(reps).divide(BigDecimal.valueOf(30), 4, RoundingMode.HALF_UP));
+        return weight.multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
     }
 
     private String calculateTrend(List<WorkoutExercise> exercises, String type) {
@@ -297,8 +315,8 @@ public class AnalyticsCalculationService {
             return 0.0;
 
         // Compare first vs last workout volumes
-        BigDecimal firstVolume = workouts.get(workouts.size() - 1).getTotalVolume();
-        BigDecimal lastVolume = workouts.get(0).getTotalVolume();
+        BigDecimal firstVolume = workouts.getLast().getTotalVolume();
+        BigDecimal lastVolume = workouts.getFirst().getTotalVolume();
 
         if (firstVolume == null || lastVolume == null || firstVolume.equals(BigDecimal.ZERO)) {
             return 0.0;

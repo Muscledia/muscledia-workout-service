@@ -6,6 +6,7 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 
@@ -52,5 +53,13 @@ public interface WorkoutPlanRepository extends ReactiveMongoRepository<WorkoutPl
     Flux<WorkoutPlan> findByEstimatedDurationMinutesBetween(Integer minDuration, Integer maxDuration);
 
     // Find by folder ID
-    Flux<WorkoutPlan> findByFolderId(Long folderId);
+    Flux<WorkoutPlan> findByFolderId(String folderId);
+
+    Flux<WorkoutPlan> findByFolderIdAndIsPublicTrue(String folderId);
+
+    Flux<WorkoutPlan> findByFolderIdAndIsPublicFalse(String folderId);
+
+
+    @Query(value = "{ 'folder_id': ?0 }", exists = true)
+    Mono<Boolean> existsByFolderId(String folderId);
 }

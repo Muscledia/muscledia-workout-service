@@ -104,4 +104,22 @@ public class GlobalExceptionHandler {
                                 LocalDateTime.now());
                 return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse));
         }
+
+        @ExceptionHandler(SomeDuplicateEntryException.class)
+        public Mono<ResponseEntity<ErrorResponse>> handleSomeDuplicateEntryException(SomeDuplicateEntryException ex) {
+                ErrorResponse errorResponse = new ErrorResponse(
+                        HttpStatus.CONFLICT.value(), // Use CONFLICT (409) for duplicate entry
+                        ex.getMessage(),
+                        LocalDateTime.now());
+                return Mono.just(ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse));
+        }
+
+        // It's good practice to also have the ErrorResponse record/class
+        // If you don't have it, define it like this:
+        record ErrorResponse(int status, String message, LocalDateTime timestamp, Map<String, Object> details) {
+                public ErrorResponse(int status, String message, LocalDateTime timestamp) {
+                        this(status, message, timestamp, null);
+                }
+        }
+
 }

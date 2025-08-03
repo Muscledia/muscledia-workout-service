@@ -72,6 +72,6 @@ public interface PersonalRecordRepository extends ReactiveMongoRepository<Person
     /**
      * Find latest PR for each exercise
      */
-    @Query("{ $match: { 'user_id': ?0 } }, { $sort: { 'achieved_date': -1 } }, { $group: { '_id': '$exercise_id', 'latest_pr': { $first: '$$ROOT' } } }")
-    Flux<PersonalRecord> findLatestPRsByUserId(Long userId);
+//    @Query("{ $match: { 'user_id': ?0 } }, { $sort: { 'achieved_date': -1 } }, { $group: { '_id': '$exercise_id', 'latest_pr': { $first: '$$ROOT' } } }")
+//    Flux<PersonalRecord> findLatestPRsByUserId(Long userId);
 }
