@@ -6,8 +6,8 @@ spring:
     name: workout-service
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb+srv://mongo:your_workout_db_password@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&connectTimeoutMS=20000&socketTimeoutMS=20000&maxIdleTimeMS=120000&maxLifeTimeMS=120000}
-      database: ${MONGODB_DATABASE:workout_db} # Dedicated database for workout service
+      uri: ${MONGODB_URI:mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&connectTimeoutMS=20000&socketTimeoutMS=20000&maxIdleTimeMS=120000&maxLifeTimeMS=120000}
+      database: ${MONGODB_DATABASE:muscledia_workouts} # Dedicated database for workout service
       auto-index-creation: true
 
     # Kafka Producer Configuration
@@ -54,7 +54,9 @@ logging:
   level:
     com.muscledia.workout_service: ${LOG_LEVEL:INFO} # Adjust package name
     org.springframework: WARN
-    kafka: ${KAFKA_LOG_LEVEL:ON}
+    org.springframework.data.mongodb: DEBUG
+    com.mongodb: DEBUG
+    kafka: ${KAFKA_LOG_LEVEL:OFF}
 
 # SpringDoc OpenAPI Configuration
 springdoc:
@@ -85,15 +87,15 @@ api:
   hevy:
     base-url: https://api.hevyapp.com
     version: v1
-    api-key: ${HEVY_API_KEY:879a3ffd-2482-4bd4-92af-b54d3b8c65f5}
+    api-key: ${HEVY_API_KEY:f2c9f484-9481-442c-bab9-905d2bd338a3}
     routines-page-size: 10
     routine-folders-page-size: 10
-    max-routines-pages: 6
-    max-routine-folders-pages: 2
+    max-routines-pages: 10
+    max-routine-folders-pages: 3
 
 # JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:1e5bf199c6450231fdd242f60485d0caadc32aa27a0d89da7174aed38326a879}
+  secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
   expiration: ${JWT_EXPIRATION:86400000} # 24 hours in milliseconds
   issuer: ${JWT_ISSUER:muscledia-user-service}
 

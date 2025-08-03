@@ -47,12 +47,18 @@ public class SecurityConfig {
                         .pathMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html", "/webjars/**")
                         .permitAll()
 
+                        // Temporarily make the Hevy folders endpoint public
+                        .pathMatchers(HttpMethod.POST, "/api/admin/data/hevy/populate").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/api/admin/data/hevy/fetch-all").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/api/admin/data/hevy/sync-folder-workout-plan-ids").permitAll()
+
                         // Admin endpoints - require ADMIN role
                         .pathMatchers(getAdminEndpoints()).hasRole("ADMIN")
 
                         // Specific method-based rules
                         .pathMatchers(HttpMethod.GET, "/api/v1/exercises/**").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/v1/muscle-groups/**").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/v1/routine-folders/public").permitAll()
 
                         // All other endpoints require authentication
                         .anyExchange().authenticated())
