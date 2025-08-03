@@ -131,7 +131,7 @@ public class WorkoutMapperService {
         return exercises.stream()
                 .filter(exercise -> exercise.getWeight() != null && exercise.getReps() != null
                         && exercise.getSets() != null)
-                .map(exercise -> exercise.getWeight()
+                .map(exercise -> BigDecimal.valueOf(exercise.getWeight()) // FIX: Convert Double to BigDecimal
                         .multiply(BigDecimal.valueOf(exercise.getReps()))
                         .multiply(BigDecimal.valueOf(exercise.getSets())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
