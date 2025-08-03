@@ -1,7 +1,10 @@
 package com.muscledia.workout_service.external.hevy.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -57,5 +60,16 @@ public class HevyWorkoutRoutine {
 
         @JsonProperty("custom_metric")
         private String customMetric;
+
+        @JsonProperty("rep_range")
+        private RepRange repRange;
+
+        @Data
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public static class RepRange {
+            private Integer start;
+            private Integer end;
+        }
     }
 }
