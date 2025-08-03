@@ -3,7 +3,10 @@ package com.muscledia.workout_service.model;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -14,8 +17,13 @@ import org.springframework.data.mongodb.core.mapping.Field;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.time.Instant;
 
+@Builder
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 @Document(collection = "workouts")
 public class Workout {
     @Id
@@ -35,11 +43,47 @@ public class Workout {
     @PastOrPresent(message = "Workout date cannot be in the future")
     private LocalDateTime workoutDate;
 
+    @Field("workout_type")
+    @NotBlank(message = "Workout type is required")
+    private String workoutType;
+
     @Field("duration_minutes")
     @NotNull(message = "Duration is required")
     @Min(value = 1, message = "Duration must be at least 1 minute")
     @Max(value = 600, message = "Duration cannot exceed 600 minutes")
     private Integer durationMinutes;
+
+    @Field("calories_burned")
+    @Min(value = 0, message = "Calories burned cannot be negative")
+    private Integer caloriesBurned;
+
+    @Field("exercises_completed")
+    @Min(value = 0, message = "Exercises completed cannot be negative")
+    private Integer exercisesCompleted;
+
+    @Field("total_sets")
+    @Min(value = 0, message = "Total sets cannot be negative")
+    private Integer totalSets;
+
+    @Field("total_reps")
+    @Min(value = 0, message = "Total reps cannot be negative")
+    private Integer totalReps;
+
+    @Field("start_time")
+    @NotNull(message = "Start time is required")
+    private Instant startTime; // Using Instant for precise time points
+
+    @Field("end_time")
+    @NotNull(message = "End time is required")
+    @PastOrPresent(message = "End time cannot be in the future")
+    private Instant endTime; // Using Instant for precise time points
+
+    @Field("metadata")
+    private Map<String, Object> metadata; // For any additional flexible data
+
+    @Field("status")
+    @NotBlank(message = "Workout status is required")
+    private String status; // e.g., "COMPLETED", "IN_PROGRESS", "CANCELED"
 
     @Field("total_volume")
     @DecimalMin(value = "0.0", message = "Total volume cannot be negative")

@@ -28,10 +28,10 @@ public class WorkoutExerciseRequest {
 
     @Schema(description = "Weight used for the exercise in the user's preferred unit", example = "135.5", minimum = "0")
     @NotNull(message = "Weight is required")
-    @DecimalMin(value = "0.0", message = "Weight cannot be negative")
-    @DecimalMax(value = "9999.99", message = "Weight cannot exceed 9999.99")
-    @Digits(integer = 4, fraction = 2, message = "Weight must have at most 4 integer digits and 2 decimal places")
-    private BigDecimal weight;
+    @PositiveOrZero(message = "Weight cannot be negative")
+    private Double weight; // Max weight lifted for this exercise, or average
+
+    private String weightUnit; // e.g., "kg", "lbs"
 
     @Schema(description = "Order of the exercise in the workout", example = "1", minimum = "1")
     @Min(value = 1, message = "Exercise order must be at least 1")

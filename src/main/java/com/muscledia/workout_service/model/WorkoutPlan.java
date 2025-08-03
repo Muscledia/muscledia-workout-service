@@ -22,7 +22,7 @@ public class WorkoutPlan {
     private String title;
 
     @Field("folder_id")
-    private Long folderId;
+    private String folderId;
 
     private String description;
 

@@ -80,7 +80,7 @@ public class WorkoutPlanService {
     }
 
     public Flux<WorkoutPlan> findByFolder(Long folderId) {
-        return workoutPlanRepository.findByFolderId(folderId)
+        return workoutPlanRepository.findByFolderId(String.valueOf(folderId))
                 .doOnComplete(() -> log.debug("Retrieved workout plans for folder: {}", folderId));
     }
 

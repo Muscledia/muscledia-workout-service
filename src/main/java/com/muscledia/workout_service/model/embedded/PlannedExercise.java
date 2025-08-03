@@ -42,5 +42,38 @@ public class PlannedExercise {
 
         @Field("custom_metric")
         private String customMetric;
+
+        // FIXED: Add rep range fields to match Hevy API structure
+        private Integer repRangeStart;
+        private Integer repRangeEnd;
+
+        /**
+         * Helper method to check if this set has a rep range
+         */
+        public boolean hasRepRange() {
+            return repRangeStart != null && repRangeEnd != null;
+        }
+
+        /**
+         * Helper method to get rep range as string (e.g., "10-12")
+         */
+        public String getRepRangeString() {
+            if (hasRepRange()) {
+                return repRangeStart + "-" + repRangeEnd;
+            }
+            return null;
+        }
+
+        /**
+         * Helper method to get effective reps (either reps or rep range)
+         */
+        public String getEffectiveReps() {
+            if (reps != null) {
+                return reps.toString();
+            } else if (hasRepRange()) {
+                return getRepRangeString();
+            }
+            return "N/A";
+        }
     }
 }

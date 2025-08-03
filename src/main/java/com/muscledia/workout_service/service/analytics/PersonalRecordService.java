@@ -5,7 +5,9 @@ import com.muscledia.workout_service.model.analytics.PersonalRecord;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.repository.analytics.PersonalRecordRepository;
 import com.muscledia.workout_service.service.ExerciseService;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -15,6 +17,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -44,20 +47,24 @@ public class PersonalRecordService {
                 checkMaxWeightPR(userId, exercise, workout),
                 checkMaxVolumePR(userId, exercise, workout),
                 checkMaxRepsPR(userId, exercise, workout),
-                checkEstimated1RMPR(userId, exercise, workout)).filter(pr -> pr != null);
+                checkEstimated1RMPR(userId, exercise, workout)).filter(Objects::nonNull);
     }
 
     /**
      * Check for maximum weight PR
      */
     private Mono<PersonalRecord> checkMaxWeightPR(Long userId, WorkoutExercise exercise, Workout workout) {
+        // Ensure exercise.getWeight() is not null before converting
+        BigDecimal currentWeight = exercise.getWeight() != null ?
+                BigDecimal.valueOf(exercise.getWeight()) : BigDecimal.ZERO;
         return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                userId, exercise.getExerciseId(), "MAX_WEIGHT")
+                        userId, exercise.getExerciseId(), "MAX_WEIGHT")
                 .switchIfEmpty(Mono.just(new PersonalRecord())) // Create empty PR if none exists
                 .flatMap(existingPR -> {
-                    if (existingPR.getValue() == null || exercise.getWeight().compareTo(existingPR.getValue()) > 0) {
+                    // FIX: Convert existingPR.getValue() to BigDecimal for comparison
+                    if (existingPR.getValue() == null || currentWeight.compareTo(BigDecimal.valueOf(existingPR.getValue().doubleValue())) > 0) {
                         return createPersonalRecord(userId, exercise, workout, "MAX_WEIGHT",
-                                exercise.getWeight(), existingPR.getValue());
+                                currentWeight, existingPR.getValue());
                     }
                     return Mono.empty();
                 });
@@ -67,7 +74,11 @@ public class PersonalRecordService {
      * Check for maximum volume PR (weight × sets × reps)
      */
     private Mono<PersonalRecord> checkMaxVolumePR(Long userId, WorkoutExercise exercise, Workout workout) {
-        BigDecimal currentVolume = exercise.getWeight()
+        // FIX: Ensure exercise.getWeight() is converted to BigDecimal for multiplication
+        BigDecimal currentWeight = exercise.getWeight() != null ?
+                BigDecimal.valueOf(exercise.getWeight()) : BigDecimal.ZERO;
+
+        BigDecimal currentVolume = currentWeight
                 .multiply(BigDecimal.valueOf(exercise.getSets()))
                 .multiply(BigDecimal.valueOf(exercise.getReps()));
 
@@ -87,19 +98,27 @@ public class PersonalRecordService {
      * Check for maximum reps PR (at same or higher weight)
      */
     private Mono<PersonalRecord> checkMaxRepsPR(Long userId, WorkoutExercise exercise, Workout workout) {
+        
+        BigDecimal exerciseWeight = exercise.getWeight() != null ?
+                BigDecimal.valueOf(exercise.getWeight()) : BigDecimal.ZERO;
+
+        int exerciseReps = exercise.getReps() != null ? exercise.getReps() : 0;
         return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                userId, exercise.getExerciseId(), "MAX_REPS")
+                        userId, exercise.getExerciseId(), "MAX_REPS")
                 .switchIfEmpty(Mono.just(new PersonalRecord()))
                 .flatMap(existingPR -> {
                     // Only count as PR if weight is same or higher and reps are more
+                    BigDecimal existingWeight = existingPR.getWeight() != null ? existingPR.getWeight() : BigDecimal.ZERO;
+                    int existingReps = existingPR.getReps() != null ? existingPR.getReps() : 0;
+
+
                     boolean isNewPR = existingPR.getValue() == null ||
-                            (exercise.getWeight().compareTo(
-                                    existingPR.getWeight() != null ? existingPR.getWeight() : BigDecimal.ZERO) >= 0 &&
-                                    exercise.getReps() > (existingPR.getReps() != null ? existingPR.getReps() : 0));
+                            (exerciseWeight.compareTo(existingWeight) >= 0 &&
+                                    exerciseReps > existingReps);
 
                     if (isNewPR) {
                         return createPersonalRecord(userId, exercise, workout, "MAX_REPS",
-                                BigDecimal.valueOf(exercise.getReps()), existingPR.getValue());
+                                BigDecimal.valueOf(exerciseReps), existingPR.getValue());
                     }
                     return Mono.empty();
                 });
@@ -109,13 +128,18 @@ public class PersonalRecordService {
      * Check for estimated 1RM PR
      */
     private Mono<PersonalRecord> checkEstimated1RMPR(Long userId, WorkoutExercise exercise, Workout workout) {
-        BigDecimal estimated1RM = calculate1RM(exercise.getWeight(), exercise.getReps());
+        // FIX: Convert exercise.getWeight() to BigDecimal and exercise.getReps() to int
+        BigDecimal estimated1RM = calculate1RM(
+                exercise.getWeight() != null ? BigDecimal.valueOf(exercise.getWeight()) : BigDecimal.ZERO,
+                exercise.getReps() != null ? exercise.getReps() : 0
+        );
 
         return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                userId, exercise.getExerciseId(), "ESTIMATED_1RM")
+                        userId, exercise.getExerciseId(), "ESTIMATED_1RM")
                 .switchIfEmpty(Mono.just(new PersonalRecord()))
                 .flatMap(existingPR -> {
-                    if (existingPR.getValue() == null || estimated1RM.compareTo(existingPR.getValue()) > 0) {
+                    // FIX: Convert existingPR.getValue() to BigDecimal for comparison
+                    if (existingPR.getValue() == null || estimated1RM.compareTo(BigDecimal.valueOf(existingPR.getValue().doubleValue())) > 0) {
                         return createPersonalRecord(userId, exercise, workout, "ESTIMATED_1RM",
                                 estimated1RM, existingPR.getValue());
                     }
@@ -134,7 +158,8 @@ public class PersonalRecordService {
         pr.setExerciseName(getExerciseName(exercise.getExerciseId())); // Would fetch from exercise service
         pr.setRecordType(recordType);
         pr.setValue(value);
-        pr.setWeight(exercise.getWeight());
+        // FIX: Convert exercise.getWeight() to BigDecimal before setting
+        pr.setWeight(exercise.getWeight() != null ? BigDecimal.valueOf(exercise.getWeight()) : null);
         pr.setReps(exercise.getReps());
         pr.setSets(exercise.getSets());
         pr.setWorkoutId(workout.getId());
@@ -243,18 +268,12 @@ public class PersonalRecordService {
 
     // Inner class for PR statistics
     public static class PRStatistics {
+        // Getters and setters
+        @Setter
+        @Getter
         private Integer totalPRs;
         private Integer pRsLast30Days;
         private Integer pRsLast7Days;
-
-        // Getters and setters
-        public Integer getTotalPRs() {
-            return totalPRs;
-        }
-
-        public void setTotalPRs(Integer totalPRs) {
-            this.totalPRs = totalPRs;
-        }
 
         public Integer getPRsLast30Days() {
             return pRsLast30Days;

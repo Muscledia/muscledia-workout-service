@@ -57,6 +57,49 @@ public class RoutineFolder {
     @Field("updated_at")
     private LocalDateTime updatedAt;
 
+
+    /**
+     * FIXED: Add workout plan ID to the list
+     */
+    public void addWorkoutPlanId(String workoutPlanId) {
+        if (this.workoutPlanIds == null) {
+            this.workoutPlanIds = new ArrayList<>();
+        }
+        if (!this.workoutPlanIds.contains(workoutPlanId)) {
+            this.workoutPlanIds.add(workoutPlanId);
+        }
+    }
+
+    /**
+     * FIXED: Remove workout plan ID from the list
+     */
+    public void removeWorkoutPlanId(String workoutPlanId) {
+        if (this.workoutPlanIds != null) {
+            this.workoutPlanIds.remove(workoutPlanId);
+        }
+    }
+
+    /**
+     * Get workout plan count
+     */
+    public int getWorkoutPlanCount() {
+        return workoutPlanIds != null ? workoutPlanIds.size() : 0;
+    }
+
+    /**
+     * Check if this is a personal folder
+     */
+    public boolean isPersonal() {
+        return Boolean.FALSE.equals(isPublic);
+    }
+
+    /**
+     * Check if this is a public folder (override the Lombok generated method)
+     */
+    public boolean getIsPublic() {
+        return Boolean.TRUE.equals(isPublic);
+    }
+
     // Helper method to parse metadata from title
     public void parseMetadataFromTitle() {
         String upperTitle = title.toUpperCase();
