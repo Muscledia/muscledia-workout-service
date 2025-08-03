@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.controller;
 
+import com.muscledia.workout_service.exception.SomeDuplicateEntryException;
 import com.muscledia.workout_service.model.RoutineFolder;
 import com.muscledia.workout_service.service.AuthenticationService;
 import com.muscledia.workout_service.service.RoutineFolderService;
@@ -18,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -41,7 +43,7 @@ public class RoutineFolderController {
         public Mono<ResponseEntity<RoutineFolder>> getPublicRoutineFolder(
                         @Parameter(description = "Routine folder ID", example = "507f1f77bcf86cd799439011") @PathVariable String id) {
                 return routineFolderService.findById(id)
-                                .filter(folder -> folder.getIsPublic()) // Only return if public
+                                .filter(RoutineFolder::getIsPublic) // Only return if public
                                 .map(ResponseEntity::ok)
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
                                 .doOnSuccess(response -> log.debug("Retrieved public routine folder with id: {}", id));
@@ -65,7 +67,7 @@ public class RoutineFolderController {
         public Mono<ResponseEntity<RoutineFolder>> getPublicRoutineFolderByHevyId(
                         @Parameter(description = "Hevy API ID", example = "12345") @PathVariable Long hevyId) {
                 return routineFolderService.findByHevyId(hevyId)
-                                .filter(folder -> folder.getIsPublic()) // Only return if public
+                                .filter(RoutineFolder::getIsPublic) // Only return if public
                                 .map(ResponseEntity::ok)
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
                                 .doOnSuccess(response -> log.debug("Retrieved public routine folder with Hevy id: {}",
@@ -80,7 +82,7 @@ public class RoutineFolderController {
         public Flux<RoutineFolder> getPublicRoutineFoldersByDifficulty(
                         @Parameter(description = "Difficulty level", example = "Intermediate") @PathVariable String level) {
                 return routineFolderService.findByDifficultyLevel(level)
-                                .filter(folder -> folder.getIsPublic()); // Only return public folders
+                                .filter(RoutineFolder::getIsPublic); // Only return public folders
         }
 
         @GetMapping("/public/equipment/{type}")
@@ -91,7 +93,7 @@ public class RoutineFolderController {
         public Flux<RoutineFolder> getPublicRoutineFoldersByEquipment(
                         @Parameter(description = "Equipment type", example = "Gym") @PathVariable String type) {
                 return routineFolderService.findByEquipmentType(type)
-                                .filter(folder -> folder.getIsPublic()); // Only return public folders
+                                .filter(RoutineFolder::getIsPublic); // Only return public folders
         }
 
         @GetMapping("/public/split/{split}")
@@ -102,7 +104,7 @@ public class RoutineFolderController {
         public Flux<RoutineFolder> getPublicRoutineFoldersByWorkoutSplit(
                         @Parameter(description = "Workout split type", example = "Push/Pull/Legs") @PathVariable String split) {
                 return routineFolderService.findByWorkoutSplit(split)
-                                .filter(folder -> folder.getIsPublic()); // Only return public folders
+                                .filter(RoutineFolder::getIsPublic); // Only return public folders
         }
 
         // GET ALL ROUTINE FOLDERS (Admin/System endpoint)
@@ -137,9 +139,21 @@ public class RoutineFolderController {
                         @ApiResponse(responseCode = "409", description = "Routine folder already in personal collection")
         })
         public Mono<RoutineFolder> saveToPersonalCollection(
-                        @Parameter(description = "Public routine folder ID to save", example = "507f1f77bcf86cd799439011") @PathVariable String publicId) {
+                @Parameter(description = "Public routine folder ID to save", example = "507f1f77bcf86cd799439011")
+                @PathVariable String publicId) {
+
+                log.info("Request to save public routine folder {} to personal collection", publicId);
+
                 return authenticationService.getCurrentUserId()
-                                .flatMap(userId -> routineFolderService.saveToPersonalCollection(publicId, userId));
+                        .doOnNext(userId -> log.debug("Authenticated user ID: {}", userId))
+                        .flatMap(userId -> routineFolderService.savePublicRoutineFolderAndPlans(publicId, userId))
+                        .doOnSuccess(savedFolder -> log.info(
+                                "Successfully saved routine folder '{}' to personal collection with ID: {}",
+                                savedFolder.getTitle(), savedFolder.getId()))
+                        .onErrorMap(this::mapToHttpException)
+                        .doOnError(e -> log.error(
+                                "Error saving routine folder {} to personal collection: {} - {}",
+                                publicId, e.getClass().getSimpleName(), e.getMessage()));
         }
 
         @GetMapping("/personal")
@@ -259,5 +273,53 @@ public class RoutineFolderController {
                                                         }
                                                 }))
                                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()));
+        }
+
+
+
+        /**
+         * CLEAN: Simple exception mapping without business logic
+         */
+        private Throwable mapToHttpException(Throwable throwable) {
+                // Don't wrap existing ResponseStatusExceptions
+                if (throwable instanceof ResponseStatusException) {
+                        return throwable;
+                }
+
+                Throwable rootCause = getRootCause(throwable);
+                String message = throwable.getMessage();
+
+                // Map based on exception type and message patterns
+                if (rootCause instanceof IllegalArgumentException) {
+                        log.info("Mapping IllegalArgumentException to 404: {}", message);
+                        return new ResponseStatusException(HttpStatus.NOT_FOUND, message, throwable);
+                }
+
+                if (rootCause instanceof SomeDuplicateEntryException ||
+                        (message != null && message.contains("already exists"))) {
+                        log.info("Mapping duplicate exception to 409: {}", message);
+                        return new ResponseStatusException(HttpStatus.CONFLICT, message, throwable);
+                }
+
+                if (rootCause instanceof SecurityException) {
+                        log.info("Mapping SecurityException to 403: {}", message);
+                        return new ResponseStatusException(HttpStatus.FORBIDDEN, message, throwable);
+                }
+
+                // Default to 500
+                log.error("Mapping unexpected exception to 500", throwable);
+                return new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "An unexpected error occurred", throwable);
+        }
+
+        /**
+         * Helper method to get root cause
+         */
+        private Throwable getRootCause(Throwable throwable) {
+                Throwable rootCause = throwable;
+                while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+                        rootCause = rootCause.getCause();
+                }
+                return rootCause;
         }
 }
