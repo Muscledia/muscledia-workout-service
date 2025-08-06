@@ -108,22 +108,20 @@ public class AnalyticsCalculationService {
      * Calculate analytics for a single exercise
      */
     private ExerciseAnalytics calculateSingleExerciseAnalytics(String exerciseId, String exerciseName,
-            List<WorkoutExercise> exercises,
-            LocalDateTime periodStart, LocalDateTime periodEnd) {
+                                                               List<WorkoutExercise> exercises,
+                                                               LocalDateTime periodStart, LocalDateTime periodEnd) {
         ExerciseAnalytics analytics = new ExerciseAnalytics();
         analytics.setExerciseId(exerciseId);
         analytics.setExerciseName(exerciseName);
 
-        // Volume calculations
+        // Volume calculations - use the correct method
         BigDecimal totalVolume = exercises.stream()
-                .map(this::calculateExerciseVolume)
+                .map(WorkoutExercise::getTotalVolume)  //Use existing method
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         analytics.setTotalVolume(totalVolume);
 
         // Count unique sessions
-        int sessionsCount = (int) exercises.stream()
-                .collect(Collectors.groupingBy(WorkoutExercise::getExerciseId)) // This would need workout date grouping
-                .size();
+        int sessionsCount = exercises.size(); // Each WorkoutExercise represents one session
         analytics.setSessionsCount(sessionsCount);
 
         if (sessionsCount > 0) {
@@ -131,36 +129,46 @@ public class AnalyticsCalculationService {
                     totalVolume.divide(BigDecimal.valueOf(sessionsCount), 2, RoundingMode.HALF_UP));
         }
 
-        // Weight statistics
+        // Weight statistics - use the correct method
         BigDecimal maxWeight = exercises.stream()
-                .map(WorkoutExercise::getWeight) // This gets a Double or Number
-                .filter(Objects::nonNull) // Ensure no null weights
-                .map(BigDecimal::valueOf) // Convert Double/Number to BigDecimal
-                .max(BigDecimal::compareTo) // Now compareTo can be applied to BigDecimal
+                .map(WorkoutExercise::getMaxWeight)  // Use existing method
+                .filter(Objects::nonNull)
+                .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
         analytics.setMaxWeight(maxWeight);
 
+        // Average weight calculation
         BigDecimal avgWeight = exercises.stream()
-                .map(WorkoutExercise::getWeight)
-                .filter(Objects::nonNull) // Filter out null weights
-                .map(BigDecimal::valueOf) // Convert Double/Number to BigDecimal
+                .map(WorkoutExercise::getMaxWeight)  //Use existing method
+                .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .divide(BigDecimal.valueOf(exercises.size()), 2, RoundingMode.HALF_UP);
         analytics.setAverageWeight(avgWeight);
 
-        // 1RM estimation (using Epley formula: weight * (1 + reps/30))
+        // 1RM estimation - use the heaviest set from each exercise
         BigDecimal estimated1RM = exercises.stream()
-                .filter(exercise -> exercise.getWeight() != null && exercise.getReps() != null) // Ensure no nulls
-                .map(this::calculate1RM) // This already handles conversion, assuming calculate1RM is fixed
+                .filter(exercise -> exercise.getSets() != null && !exercise.getSets().isEmpty())
+                .map(this::calculateExercise1RM)  // New helper method
                 .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
         analytics.setEstimated1RM(estimated1RM);
 
-        // Set and rep statistics
-        analytics.setTotalSets(exercises.stream().mapToInt(WorkoutExercise::getSets).sum());
-        analytics.setTotalReps(exercises.stream().mapToInt(WorkoutExercise::getReps).sum());
-        analytics.setAverageSetsPerSession((double) analytics.getTotalSets() / sessionsCount);
-        analytics.setAverageRepsPerSet((double) analytics.getTotalReps() / analytics.getTotalSets());
+        // Set and rep statistics - use correct methods
+        int totalSets = exercises.stream()
+                .mapToInt(exercise -> exercise.getSets() != null ? exercise.getSets().size() : 0)  // Count sets
+                .sum();
+
+        int totalReps = exercises.stream()
+                .mapToInt(WorkoutExercise::getTotalReps)  // Use existing method
+                .sum();
+
+        analytics.setTotalSets(totalSets);
+        analytics.setTotalReps(totalReps);
+        analytics.setAverageSetsPerSession((double) totalSets / sessionsCount);
+
+        if (totalSets > 0) {
+            analytics.setAverageRepsPerSet((double) totalReps / totalSets);
+        }
 
         // Frequency calculation
         long periodDays = ChronoUnit.DAYS.between(periodStart, periodEnd);
@@ -250,25 +258,43 @@ public class AnalyticsCalculationService {
         analytics.setExerciseAnalytics(new ArrayList<>());
     }
 
+    /**
+     * Calculate exercise volume using existing WorkoutExercise methods
+     */
     private BigDecimal calculateExerciseVolume(WorkoutExercise exercise) {
-        if (exercise.getWeight() == null || exercise.getSets() == null || exercise.getReps() == null) {
-            return BigDecimal.ZERO; // Handle null values gracefully
-        }
-        return BigDecimal.valueOf(exercise.getWeight()) // Convert to BigDecimal
-                .multiply(BigDecimal.valueOf(exercise.getSets()))
-                .multiply(BigDecimal.valueOf(exercise.getReps()));
+        return exercise.getTotalVolume();  // Use existing method
     }
 
-    private BigDecimal calculate1RM(WorkoutExercise exercise) {
-        // Epley formula: weight * (1 + reps/30)
-        if (exercise.getWeight() == null || exercise.getReps() == null) {
-            return BigDecimal.ZERO; // Handle null values
+    /**
+     * Calculate 1RM for an exercise using its heaviest set
+     */
+    private BigDecimal calculateExercise1RM(WorkoutExercise exercise) {
+        if (exercise.getSets() == null || exercise.getSets().isEmpty()) {
+            return BigDecimal.ZERO;
         }
-        int reps = exercise.getReps(); // Ensure reps is int
-        BigDecimal weight = BigDecimal.valueOf(exercise.getWeight()); // Convert to BigDecimal
 
-        if (reps == 1)
+        // Find the heaviest set and calculate 1RM
+        return exercise.getSets().stream()
+                .filter(set -> set.getWeightKg() != null && set.getReps() != null && set.getReps() > 0)
+                .map(this::calculate1RMFromSet)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+    }
+
+    /**
+     * Calculate 1RM from a single set using Epley formula
+     */
+    private BigDecimal calculate1RMFromSet(com.muscledia.workout_service.model.embedded.WorkoutSet set) {
+        BigDecimal weight = set.getWeightKg();
+        Integer reps = set.getReps();
+
+        if (weight == null || reps == null || reps <= 0) {
+            return BigDecimal.ZERO;
+        }
+
+        if (reps == 1) {
             return weight;
+        }
 
         // Epley formula: weight * (1 + reps/30)
         BigDecimal multiplier = BigDecimal.ONE.add(
