@@ -4,6 +4,14 @@ server:
 spring:
   application:
     name: workout-service
+  jackson:
+    # Add these Jackson configurations
+    serialization:
+      write-dates-as-timestamps: false
+      write-date-timestamps-as-nanoseconds: false
+    deserialization:
+      read-date-timestamps-as-nanoseconds: false
+      adjust-dates-to-context-time-zone: false
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&connectTimeoutMS=20000&socketTimeoutMS=20000&maxIdleTimeMS=120000&maxLifeTimeMS=120000}
