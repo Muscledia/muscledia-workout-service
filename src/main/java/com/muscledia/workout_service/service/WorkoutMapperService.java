@@ -5,11 +5,13 @@ import com.muscledia.workout_service.dto.request.UpdateWorkoutRequest;
 import com.muscledia.workout_service.dto.request.embedded.WorkoutExerciseRequest;
 import com.muscledia.workout_service.model.Workout;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
+import com.muscledia.workout_service.model.embedded.WorkoutSet;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -109,19 +111,50 @@ public class WorkoutMapperService {
             return null;
         }
 
-        WorkoutExercise exercise = new WorkoutExercise();
-        exercise.setExerciseId(request.getExerciseId());
-        exercise.setSets(request.getSets());
-        exercise.setReps(request.getReps());
-        exercise.setWeight(request.getWeight());
-        exercise.setOrder(request.getOrder());
-        exercise.setNotes(request.getNotes());
+        WorkoutExercise exercise = WorkoutExercise.builder()
+                .exerciseId(request.getExerciseId())
+                .exerciseName("Exercise " + request.getExerciseId()) // TODO: Get actual name from Exercise service
+                .exerciseOrder(request.getOrder())
+                .exerciseCategory("STRENGTH") // TODO: Get from Exercise service
+                .equipment("Unknown") // TODO: Get from Exercise service
+                .notes(request.getNotes())
+                .sets(new ArrayList<>())
+                .build();
+
+        // Create WorkoutSet objects based on the request
+        if (request.getSets() != null && request.getSets() > 0) {
+            List<WorkoutSet> workoutSets = createWorkoutSetsFromRequest(request);
+            exercise.setSets(workoutSets);
+        }
 
         return exercise;
     }
 
     /**
-     * Calculate total volume from workout exercises
+     * Create WorkoutSet objects from the simplified request
+     */
+    private List<WorkoutSet> createWorkoutSetsFromRequest(WorkoutExerciseRequest request) {
+        List<WorkoutSet> sets = new ArrayList<>();
+
+        // Create the specified number of sets with the same weight/reps
+        // This is a simplified approach - in reality, each set might have different values
+        for (int i = 1; i <= request.getSets(); i++) {
+            WorkoutSet set = WorkoutSet.builder()
+                    .setNumber(i)
+                    .weightKg(request.getWeight() != null ? BigDecimal.valueOf(request.getWeight()) : null)
+                    .reps(request.getReps())
+                    .completed(true) // Assume completed since it's being logged
+                    .startedAt(LocalDateTime.now())
+                    .completedAt(LocalDateTime.now())
+                    .build();
+            sets.add(set);
+        }
+
+        return sets;
+    }
+
+    /**
+     * Calculate total volume from workout exercises using the correct method
      */
     private BigDecimal calculateTotalVolume(List<WorkoutExercise> exercises) {
         if (exercises == null || exercises.isEmpty()) {
@@ -129,11 +162,7 @@ public class WorkoutMapperService {
         }
 
         return exercises.stream()
-                .filter(exercise -> exercise.getWeight() != null && exercise.getReps() != null
-                        && exercise.getSets() != null)
-                .map(exercise -> BigDecimal.valueOf(exercise.getWeight()) // FIX: Convert Double to BigDecimal
-                        .multiply(BigDecimal.valueOf(exercise.getReps()))
-                        .multiply(BigDecimal.valueOf(exercise.getSets())))
+                .map(WorkoutExercise::getTotalVolume) // ✅ Use the existing method
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
