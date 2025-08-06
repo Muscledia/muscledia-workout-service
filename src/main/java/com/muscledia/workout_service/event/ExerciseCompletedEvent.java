@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.SuperBuilder;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,13 @@ import java.util.Map;
 @SuperBuilder(toBuilder = true)
 @EqualsAndHashCode(callSuper = true)
 public class ExerciseCompletedEvent extends BaseEvent {
+
+    /**
+     * Unique identifier for the exercise
+     */
+    @NotBlank
+    private String exerciseId;
+
     /**
      * Name of the exercise completed
      */
@@ -49,7 +57,22 @@ public class ExerciseCompletedEvent extends BaseEvent {
     private Integer totalReps;
 
     /**
-     * Weight used (if applicable)
+     * Total volume for this exercise
+     */
+    private BigDecimal totalVolume;
+
+    /**
+     * Maximum weight used in this exercise
+     */
+    private BigDecimal maxWeight;
+
+    /**
+     * Primary muscle group targeted
+     */
+    private String primaryMuscleGroup;
+
+    /**
+     * Weight used (if applicable) - keeping for backward compatibility
      */
     private Double weight;
 
@@ -89,9 +112,6 @@ public class ExerciseCompletedEvent extends BaseEvent {
      */
     private Map<String, Object> metadata;
 
-    // No need for custom constructor if using @SuperBuilder and @NoArgsConstructor
-    // For creating instances, use ExerciseCompletedEvent.builder().userId(...).exerciseName(...).build();
-
     @Override
     public String getEventType() {
         return "EXERCISE_COMPLETED"; // Must match "name" in BaseEvent's @JsonSubTypes and KafkaConfig's type mapping
@@ -99,12 +119,25 @@ public class ExerciseCompletedEvent extends BaseEvent {
 
     @Override
     public boolean isValid() {
-        // Includes BaseEvent validation implicitly through Lombok's @Data on superclass
-        return exerciseName != null && !exerciseName.trim().isEmpty()
-                && exerciseCategory != null && !exerciseCategory.trim().isEmpty()
-                && workoutId != null && !workoutId.trim().isEmpty()
-                && setsCompleted != null && setsCompleted > 0
-                && totalReps != null && totalReps > 0;
+        // Basic field validation
+        if (exerciseName == null || exerciseName.trim().isEmpty() ||
+                exerciseCategory == null || exerciseCategory.trim().isEmpty() ||
+                workoutId == null || workoutId.trim().isEmpty()) {
+            return false;
+        }
+
+        // For rep-based exercises (strength training)
+        boolean hasValidRepData = setsCompleted != null && setsCompleted > 0 &&
+                totalReps != null && totalReps > 0;
+
+        // For duration-based exercises (cardio, warmup, etc.)
+        boolean hasValidDurationData = durationSeconds != null && durationSeconds > 0;
+
+        // For distance-based exercises
+        boolean hasValidDistanceData = distance != null && distance > 0.0;
+
+        // Exercise is valid if it has at least one valid performance metric
+        return hasValidRepData || hasValidDurationData || hasValidDistanceData;
     }
 
     @Override
