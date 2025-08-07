@@ -9,7 +9,9 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.experimental.SuperBuilder;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -64,6 +66,16 @@ public class WorkoutCompletedEvent extends BaseEvent {
     private Integer totalReps;
 
     /**
+     * Total volume (weight × reps) across all exercises
+     */
+    private BigDecimal totalVolume;
+
+    /**
+     * List of muscle groups worked in this workout
+     */
+    private List<String> workedMuscleGroups;
+
+    /**
      * When the workout was started
      */
     @NotNull
@@ -80,10 +92,6 @@ public class WorkoutCompletedEvent extends BaseEvent {
      * e.g., {"difficulty": "intermediate", "category": "upper-body"}
      */
     private Map<String, Object> metadata;
-
-    // No need for custom constructor if using @SuperBuilder and @NoArgsConstructor
-    // unless you want specific defaults not covered by @Builder.Default on BaseEvent.
-    // For creating instances, use WorkoutCompletedEvent.builder().userId(...).workoutId(...).build();
 
     @Override
     public String getEventType() {

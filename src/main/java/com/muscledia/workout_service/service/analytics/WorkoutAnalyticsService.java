@@ -61,7 +61,7 @@ public class WorkoutAnalyticsService {
         log.info("Calculating new analytics for user {} period {} from {} to {}",
                 userId, period, periodStart, periodEnd);
 
-        return workoutService.findByUserAndDateRange(userId, periodStart, periodEnd)
+        return workoutService.getUserWorkouts(userId, periodStart.toLocalDate(), periodEnd.toLocalDate())
                 .collectList()
                 .flatMap(workouts -> calculationService.calculateWorkoutAnalytics(
                         userId, period, periodStart, periodEnd, workouts))
@@ -144,30 +144,29 @@ public class WorkoutAnalyticsService {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime start, end;
 
-        switch (period.toUpperCase()) {
-            case "WEEKLY":
+        end = switch (period.toUpperCase()) {
+            case "WEEKLY" -> {
                 start = now.minusWeeks(1).truncatedTo(ChronoUnit.DAYS);
-                end = now.truncatedTo(ChronoUnit.DAYS);
-                break;
-            case "MONTHLY":
+                yield now.truncatedTo(ChronoUnit.DAYS);
+            }
+            case "MONTHLY" -> {
                 start = now.minusMonths(1).truncatedTo(ChronoUnit.DAYS);
-                end = now.truncatedTo(ChronoUnit.DAYS);
-                break;
-            case "QUARTERLY":
+                yield now.truncatedTo(ChronoUnit.DAYS);
+            }
+            case "QUARTERLY" -> {
                 start = now.minusMonths(3).truncatedTo(ChronoUnit.DAYS);
-                end = now.truncatedTo(ChronoUnit.DAYS);
-                break;
-            case "YEARLY":
+                yield now.truncatedTo(ChronoUnit.DAYS);
+            }
+            case "YEARLY" -> {
                 start = now.minusYears(1).truncatedTo(ChronoUnit.DAYS);
-                end = now.truncatedTo(ChronoUnit.DAYS);
-                break;
-            case "ALL_TIME":
+                yield now.truncatedTo(ChronoUnit.DAYS);
+            }
+            case "ALL_TIME" -> {
                 start = LocalDateTime.of(2020, 1, 1, 0, 0); // Arbitrary start date
-                end = now.truncatedTo(ChronoUnit.DAYS);
-                break;
-            default:
-                throw new IllegalArgumentException("Invalid period: " + period);
-        }
+                yield now.truncatedTo(ChronoUnit.DAYS);
+            }
+            default -> throw new IllegalArgumentException("Invalid period: " + period);
+        };
 
         return new LocalDateTime[] { start, end };
     }
