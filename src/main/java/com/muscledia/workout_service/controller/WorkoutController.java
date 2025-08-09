@@ -7,6 +7,7 @@ import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
 import com.muscledia.workout_service.dto.response.WorkoutExerciseResponse;
 import com.muscledia.workout_service.dto.response.WorkoutResponse;
 import com.muscledia.workout_service.dto.response.WorkoutSetResponse;
+import com.muscledia.workout_service.exception.InvalidWorkoutStateException;
 import com.muscledia.workout_service.model.Workout;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutSet;
@@ -330,13 +331,22 @@ public class WorkoutController {
 
         return authenticationService.getCurrentUserId()
                 .flatMap(userId -> {
+                    log.info("Authenticated user: {} completing workout: {}", userId, workoutId);
+
                     Map<String, Object> completionData = convertCompletionRequest(completionRequest);
                     return workoutService.completeWorkout(workoutId, userId, completionData);
                 })
                 .map(this::convertToResponse)
                 .map(ResponseEntity::ok)
                 .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
-                .doOnSuccess(response -> log.info("Successfully completed workout: {}", workoutId));
+                .doOnSuccess(response -> log.info("Successfully completed workout: {}", workoutId))
+                .doOnError(error -> {
+                    if (error instanceof InvalidWorkoutStateException) {
+                        log.warn("USER STORY VALIDATION FAILED: {}", error.getMessage());
+                    } else {
+                        log.error("Failed to complete workout {}: {}", workoutId, error.getMessage());
+                    }
+                });
     }
 
     @PutMapping("/{workoutId}/cancel")
