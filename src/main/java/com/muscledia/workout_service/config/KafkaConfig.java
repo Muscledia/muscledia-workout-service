@@ -82,8 +82,6 @@ public class KafkaConfig {
      */
     private String getTypeMapping() {
         // Only include types that THIS service will publish.
-        // The keys "WORKOUT_COMPLETED" and "EXERCISE_COMPLETED" must match
-        // what Gamification_service's BaseEvent @JsonSubTypes expects.
         return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent," +
                 "exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
