@@ -3,7 +3,6 @@ package com.muscledia.workout_service.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.muscledia.workout_service.event.BaseEvent;
-import com.muscledia.workout_service.event.ExerciseCompletedEvent;
 import com.muscledia.workout_service.event.WorkoutCompletedEvent;
 import com.muscledia.workout_service.model.EventOutbox;
 import com.muscledia.workout_service.repository.EventOutboxRepository;
@@ -37,7 +36,7 @@ public class EventOutboxService {
 
     // Define constants for Kafka topics
     public static final String WORKOUT_EVENTS_TOPIC = "workout-events";
-    public static final String USER_ACTIVITY_EVENTS_TOPIC = "user-activity-events";
+    //public static final String USER_ACTIVITY_EVENTS_TOPIC = "user-activity-events";
 
     /**
      * Store an event for publishing (within a transaction)
@@ -174,16 +173,11 @@ public class EventOutboxService {
 
     private String determineTopicForEvent(BaseEvent event) {
         if (event instanceof WorkoutCompletedEvent) {
+            log.debug("WorkoutCompletedEvent → topic: {}", WORKOUT_EVENTS_TOPIC);
             return WORKOUT_EVENTS_TOPIC;
-        } else if (event instanceof ExerciseCompletedEvent) {
-            return USER_ACTIVITY_EVENTS_TOPIC;
         }
         log.error("Unknown event type: {} encountered for topic determination.", event.getEventType());
         throw new IllegalArgumentException("Cannot determine Kafka topic for unknown event type: " + event.getEventType());
-    }
-
-    public TransactionalOperator getTransactionalOperator() {
-        return transactionalOperator;
     }
 
     @lombok.Value
