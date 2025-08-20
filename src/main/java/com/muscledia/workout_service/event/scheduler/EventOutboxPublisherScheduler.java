@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+
 /**
  * Scheduled task that periodically polls the event outbox table
  * and publishes PENDING and FAILED (retryable) events to Kafka.
@@ -34,66 +36,100 @@ public class EventOutboxPublisherScheduler {
      */
     @Scheduled(fixedDelay = FIXED_DELAY_MS)
     public void publishPendingEvents() {
-        log.debug("Polling for pending outbox events...");
+        log.info("🔄 POLLING FOR PENDING OUTBOX EVENTS...");
 
         Flux<EventOutbox> eventsToProcess = Flux.concat(
-                        eventOutboxService.getPendingEvents(),
+                        eventOutboxService.getPendingEvents()
+                                .doOnNext(event -> log.info("📨 FOUND PENDING EVENT: id={}, eventId={}, type={}, topic={}, status={}",
+                                        event.getId(), event.getEventId(), event.getEventType(), event.getTopic(), event.getStatus())),
                         eventOutboxService.getRetryableFailedEvents()
-                ).distinct(EventOutbox::getId) // Ensure unique events if they could appear in both lists
-                .filterWhen(event -> eventOutboxService.markAsProcessing(event.getId())); // Mark as processing reactively
+                                .doOnNext(event -> log.info("🔄 FOUND FAILED EVENT FOR RETRY: id={}, eventId={}, attempts={}",
+                                        event.getId(), event.getEventId(), event.getAttemptCount()))
+                )
+                .distinct(EventOutbox::getId)
+                .filterWhen(event -> {
+                    log.info("🔒 ATTEMPTING TO MARK AS PROCESSING: eventId={}", event.getEventId());
+                    return eventOutboxService.markAsProcessing(event.getId())
+                            .doOnNext(marked -> log.info("🔒 MARK AS PROCESSING RESULT: eventId={}, marked={}", event.getEventId(), marked));
+                });
 
         eventsToProcess
-                .flatMap(event -> {
-                    return Mono.fromCallable(() -> {
-                                // Deserialize payload to the actual event object
-                                return objectMapper.readValue(event.getPayload(), Class.forName(getEventClassPath(event.getEventType())));
-                            })
-                            .flatMap(eventPayload -> {
-                                log.debug("Attempting to send event {} (type: {}) to topic {}", event.getEventId(), event.getEventType(), event.getTopic());
-                                // Send to Kafka, then handle success/failure
-                                return Mono.fromFuture(kafkaTemplate.send(event.getTopic(), event.getMessageKey(), eventPayload).toCompletableFuture())
-                                        .flatMap(sendResult -> eventOutboxService.markAsPublished(event.getId()))
-                                        .doOnSuccess(v -> log.info("Successfully published event {} (type: {}) to topic {}",
-                                                event.getEventId(), event.getEventType(), event.getTopic()))
-                                        // The 'ex.getMessage()' should work here. If not, it's an environment/IDE issue.
-                                        .onErrorResume(ex -> {
-                                            log.error("Failed to publish event {} (type: {}) to topic {}: {}",
-                                                    event.getEventId(), event.getEventType(), event.getTopic(), ex.getMessage(), ex);
-                                            return eventOutboxService.markAsFailed(event.getId(), "Kafka publish error: " + ex.getMessage());
-                                        })
-                                        .then(); // Convert to Mono<Void>
-                            })
-                            .onErrorResume(e -> {
-                                log.error("Error processing event {} from outbox before sending to Kafka: {}",
-                                        event.getEventId(), e.getMessage(), e);
-                                return eventOutboxService.markAsFailed(event.getId(), "Serialization/Processing error: " + e.getMessage());
-                            });
-                })
-                .subscribe(null, // onNext: no-op since we return Mono<Void>
-                        error -> log.error("Error in event outbox publisher scheduler stream: {}", error.getMessage(), error),
-                        () -> log.debug("Finished polling and processing outbox events for this cycle."));
+                .doOnNext(event -> log.info("📤 STARTING TO PROCESS EVENT: eventId={}, type={}, topic={}",
+                        event.getEventId(), event.getEventType(), event.getTopic()))
+                .flatMap(this::processEvent)
+                .doOnComplete(() -> log.info("✅ FINISHED PROCESSING ALL EVENTS IN THIS CYCLE"))
+                .subscribe(
+                        null,
+                        error -> log.error("❌ SCHEDULER STREAM ERROR: {}", error.getMessage(), error),
+                        () -> log.debug("🔄 SCHEDULER CYCLE COMPLETED")
+                );
     }
 
-    /**
-     * Scheduled task to clean up old published events from the outbox.
-     */
+    private Mono<Void> processEvent(EventOutbox event) {
+        return deserializeEvent(event)
+                .flatMap(eventPayload -> sendToKafka(event, eventPayload))
+                .flatMap(sendResult -> {
+                    log.info("✅ KAFKA SEND SUCCESS - MARKING AS PUBLISHED: eventId={}", event.getEventId());
+                    return eventOutboxService.markAsPublished(event.getId());
+                })
+                .doOnSuccess(v -> log.info("🎉 EVENT SUCCESSFULLY PUBLISHED: eventId={} to topic={}",
+                        event.getEventId(), event.getTopic()))
+                .onErrorResume(ex -> {
+                    log.error("❌ EVENT PROCESSING FAILED: eventId={}, error={}", event.getEventId(), ex.getMessage());
+                    return eventOutboxService.markAsFailed(event.getId(), "Processing error: " + ex.getMessage());
+                })
+                .then();
+    }
+
+    private Mono<Object> deserializeEvent(EventOutbox event) {
+        return Mono.fromCallable(() -> {
+            log.info("🔍 DESERIALIZING EVENT: eventId={}, type={}", event.getEventId(), event.getEventType());
+            try {
+                String className = getEventClassPath(event.getEventType());
+                log.info("📋 USING CLASS: {}", className);
+                Class<?> eventClass = Class.forName(className);
+                Object deserializedEvent = objectMapper.readValue(event.getPayload(), eventClass);
+                log.info("✅ DESERIALIZATION SUCCESS: eventId={}, class={}",
+                        event.getEventId(), deserializedEvent.getClass().getSimpleName());
+                return deserializedEvent;
+            } catch (Exception e) {
+                log.error("❌ DESERIALIZATION FAILED: eventId={}, error={}", event.getEventId(), e.getMessage());
+                throw new RuntimeException("Failed to deserialize event: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    private Mono<org.springframework.kafka.support.SendResult<String, Object>> sendToKafka(EventOutbox event, Object eventPayload) {
+        log.info("📤 SENDING TO KAFKA: eventId={}, topic={}, key={}, payload={}",
+                event.getEventId(), event.getTopic(), event.getMessageKey(), eventPayload.getClass().getSimpleName());
+
+        return Mono.fromFuture(kafkaTemplate.send(event.getTopic(), event.getMessageKey(), eventPayload).toCompletableFuture())
+                .timeout(Duration.ofSeconds(10))
+                .doOnNext(sendResult -> log.info("📨 KAFKA SEND RESULT: topic={}, partition={}, offset={}, timestamp={}",
+                        sendResult.getRecordMetadata().topic(),
+                        sendResult.getRecordMetadata().partition(),
+                        sendResult.getRecordMetadata().offset(),
+                        sendResult.getRecordMetadata().timestamp()))
+                .doOnError(error -> log.error("❌ KAFKA SEND FAILED: eventId={}, topic={}, error={}",
+                        event.getEventId(), event.getTopic(), error.getMessage()));
+    }
+
     @Scheduled(fixedRate = CLEANUP_DELAY_MS)
     public void cleanupOldEvents() {
-        log.info("Initiating outbox cleanup for published events older than 7 days...");
+        log.info("🧹 INITIATING OUTBOX CLEANUP for published events older than 7 days...");
         eventOutboxService.cleanupOldEvents()
-                .doOnSuccess(v -> log.info("Outbox cleanup completed."))
-                .doOnError(e -> log.error("Error during outbox cleanup: {}", e.getMessage(), e))
-                .subscribe(); // Subscribe to trigger the reactive chain
+                .doOnSuccess(v -> log.info("🧹 OUTBOX CLEANUP COMPLETED"))
+                .doOnError(e -> log.error("❌ OUTBOX CLEANUP ERROR: {}", e.getMessage(), e))
+                .subscribe();
     }
 
-    /**
-     * Helper to get the fully qualified class name based on eventType.
-     */
+    // ✅ FIXED: Add all missing event types that appear in your logs
     private String getEventClassPath(String eventType) throws ClassNotFoundException {
-        return switch (eventType) {
+        String className = switch (eventType) {
             case "WORKOUT_COMPLETED" -> "com.muscledia.workout_service.event.WorkoutCompletedEvent";
-            case "EXERCISE_COMPLETED" -> "com.muscledia.workout_service.event.ExerciseCompletedEvent";
             default -> throw new ClassNotFoundException("Unknown event type for class mapping: " + eventType);
         };
+        log.debug("📋 EVENT TYPE '{}' mapped to class: {}", eventType, className);
+        return className;
     }
 }
