@@ -25,9 +25,6 @@ public class KafkaConfig {
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
 
-    @Value("${spring.kafka.producer.transaction-id-prefix:workout-service-tx-}")
-    private String transactionIdPrefix;
-
     // ===============================
     // PRODUCER CONFIGURATION
     // ===============================
@@ -48,16 +45,10 @@ public class KafkaConfig {
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "gzip");
 
         // Reliability Configuration
-        props.put(ProducerConfig.ACKS_CONFIG, "1"); // Leader acknowledgment
+        props.put(ProducerConfig.ACKS_CONFIG, "all"); // Leader acknowledgment
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, 100);
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
-
-        // Idempotent producer for exactly-once delivery semantics (recommended)
-        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-
-        // Transactional Producer (if using Spring's Kafka transaction manager)
-        props.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionIdPrefix);
 
 
         // JSON Serialization Configuration: IMPORTANT for cross-service type mapping
@@ -66,12 +57,23 @@ public class KafkaConfig {
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, true);
         props.put(JsonSerializer.TYPE_MAPPINGS, getTypeMapping());
 
-        return new DefaultKafkaProducerFactory<>(props);
+        // ✅ IMPORTANT: Create factory without transaction support
+        DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(props);
+
+        // ✅ EXPLICITLY DISABLE TRANSACTIONS
+        factory.setTransactionIdPrefix(null);
+
+        return factory;
     }
 
     @Bean
     public KafkaTemplate<String, Object> kafkaTemplate() {
-        return new KafkaTemplate<>(producerFactory());
+        KafkaTemplate<String, Object> template = new KafkaTemplate<>(producerFactory());
+
+        // ✅ CRITICAL: Disable transaction support completely
+        template.setTransactionIdPrefix(null);
+
+        return template;
     }
 
     /**
@@ -82,8 +84,8 @@ public class KafkaConfig {
      */
     private String getTypeMapping() {
         // Only include types that THIS service will publish.
-        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent," +
-                "exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
+        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent,";
+                //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
 
 
