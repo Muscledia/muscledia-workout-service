@@ -15,6 +15,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 
 
 /**
@@ -33,6 +34,7 @@ public class EventOutboxService {
     private final EventOutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
     private final TransactionalOperator transactionalOperator; // Inject for reactive transactions
+    private final EventOutboxRepository eventOutboxRepository;
 
     // Define constants for Kafka topics
     public static final String WORKOUT_EVENTS_TOPIC = "workout-events";
@@ -178,6 +180,61 @@ public class EventOutboxService {
         }
         log.error("Unknown event type: {} encountered for topic determination.", event.getEventType());
         throw new IllegalArgumentException("Cannot determine Kafka topic for unknown event type: " + event.getEventType());
+    }
+
+    public Mono<EventOutbox> saveEvent(BaseEvent event) {
+        return Mono.fromCallable(() -> {
+                    try {
+                        // Validate the event
+                        if (!event.isValid()) {
+                            throw new IllegalArgumentException("Invalid event: " + event.getEventId());
+                        }
+
+                        // Serialize the event to JSON
+                        String payload = objectMapper.writeValueAsString(event);
+
+                        // Determine topic based on event type
+                        String topic = getTopicForEventType(event.getEventType());
+
+                        // Create EventOutbox entity
+                        EventOutbox outboxEvent = EventOutbox.builder()
+                                .eventId(event.getEventId())
+                                .eventType(event.getEventType())
+                                .topic(topic)
+                                .messageKey(event.getUserId().toString())
+                                .payload(payload)
+                                .status(EventOutbox.EventStatus.PENDING)
+                                .userId(event.getUserId())
+                                .attemptCount(0)
+                                .maxAttempts(3)
+                                .createdAt(Instant.now())
+                                .updatedAt(Instant.now())
+                                .build();
+
+                        log.info("💾 SAVING EVENT TO OUTBOX: eventId={}, type={}, topic={}, userId={}",
+                                event.getEventId(), event.getEventType(), topic, event.getUserId());
+
+                        return outboxEvent;
+                    } catch (Exception e) {
+                        log.error("❌ FAILED TO PREPARE EVENT FOR OUTBOX: eventId={}, error={}",
+                                event.getEventId(), e.getMessage());
+                        throw new RuntimeException("Failed to serialize event for outbox", e);
+                    }
+                })
+                .flatMap(eventOutboxRepository::save)
+                .doOnSuccess(saved -> log.info("✅ EVENT SAVED TO OUTBOX: id={}, eventId={}, status={}",
+                        saved.getId(), saved.getEventId(), saved.getStatus()))
+                .doOnError(error -> log.error("❌ FAILED TO SAVE EVENT TO OUTBOX: {}", error.getMessage()));
+    }
+
+    // ✅ IMPLEMENT: Topic mapping based on event type
+    private String getTopicForEventType(String eventType) {
+        return switch (eventType) {
+            case "WORKOUT_COMPLETED", "WORKOUT_STARTED" -> "workout-events";
+            case "EXERCISE_COMPLETED", "SET_COMPLETED" -> "user-activity-events";
+            case "PERSONAL_RECORD_ACHIEVED" -> "achievement-events";
+            default -> "general-events";
+        };
     }
 
     @lombok.Value
