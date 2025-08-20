@@ -33,7 +33,7 @@ spring:
       properties:
         enable.idempotence: true
       # transaction-id-prefix is needed if you implement the outbox pattern in this service
-      transaction-id-prefix: ${KAFKA_PRODUCER_TX_PREFIX:workout-service-tx-}
+      #transaction-id-prefix: ${KAFKA_PRODUCER_TX_PREFIX:workout-service-tx-}
     consumer:
       group-id: ${KAFKA_CONSUMER_GROUP:workout-service-consumer} # Unique consumer group ID
       auto-offset-reset: earliest # Or 'latest', depending on your desired behavior
