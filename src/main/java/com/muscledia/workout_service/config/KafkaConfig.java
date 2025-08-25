@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,7 +20,7 @@ import java.util.Map;
  */
 @Configuration
 @EnableKafka
-
+@Slf4j
 public class KafkaConfig {
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
@@ -38,17 +39,25 @@ public class KafkaConfig {
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
 
-        // Performance Optimizations
-        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384); // 16KB batches
-        props.put(ProducerConfig.LINGER_MS_CONFIG, 10); // Wait up to 10ms for batching
-        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432); // 32MB buffer
+        // ✅ CRITICAL: Connection and timeout settings
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 120000);
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 60000);
+
+        // ✅ CRITICAL: Connection setup timeouts
+        props.put("socket.connection.setup.timeout.ms", 10000);
+        props.put("socket.connection.setup.timeout.max.ms", 30000);
+
+        // Performance settings
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
+        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432);
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "gzip");
 
-        // Reliability Configuration
-        props.put(ProducerConfig.ACKS_CONFIG, "all"); // Leader acknowledgment
+        // Reliability Configuration (NO TRANSACTIONS)
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, 100);
-        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
 
 
         // JSON Serialization Configuration: IMPORTANT for cross-service type mapping
@@ -57,22 +66,19 @@ public class KafkaConfig {
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, true);
         props.put(JsonSerializer.TYPE_MAPPINGS, getTypeMapping());
 
-        // ✅ IMPORTANT: Create factory without transaction support
+
         DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(props);
 
-        // ✅ EXPLICITLY DISABLE TRANSACTIONS
-        factory.setTransactionIdPrefix(null);
-
+        log.info("✅ KAFKA PRODUCER FACTORY CREATED - transactionCapable: {}", factory.transactionCapable());
         return factory;
     }
 
     @Bean
     public KafkaTemplate<String, Object> kafkaTemplate() {
+        log.info("🔧 CREATING KAFKA TEMPLATE");
         KafkaTemplate<String, Object> template = new KafkaTemplate<>(producerFactory());
 
-        // ✅ CRITICAL: Disable transaction support completely
-        template.setTransactionIdPrefix(null);
-
+        log.info("✅ KAFKA TEMPLATE CREATED");
         return template;
     }
 
@@ -84,7 +90,7 @@ public class KafkaConfig {
      */
     private String getTypeMapping() {
         // Only include types that THIS service will publish.
-        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent,";
+        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent";
                 //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
 
