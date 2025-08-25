@@ -30,8 +30,6 @@ spring:
       batch-size: 16384 # Default batch size (16KB)
       linger.ms: 5 # Time to wait before sending a batch
       # Idempotent producer for exactly-once delivery (important for robustness)
-      properties:
-        enable.idempotence: true
       # transaction-id-prefix is needed if you implement the outbox pattern in this service
       #transaction-id-prefix: ${KAFKA_PRODUCER_TX_PREFIX:workout-service-tx-}
     consumer:
