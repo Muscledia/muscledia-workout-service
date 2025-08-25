@@ -461,55 +461,67 @@ public class WorkoutService {
         return workoutRepository.findByUserIdOrderByWorkoutDateDesc(userId);
     }
 
-    // SET LOGGING - Core functionality for the user story
-
     /**
-     * Log a new set for a specific exercise - This implements the user story!
+     * ENHANCED: Log set with better personal record handling
      */
     public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
-        log.info("Logging set for workout {} exercise {}: {}kg x {} reps",
-                workoutId, exerciseIndex, setRequest.getWeightKg(), setRequest.getReps());
+        log.info("🏋️ LOGGING SET: workoutId={}, userId={}, exerciseIndex={}, weight={}kg, reps={}",
+                workoutId, userId, exerciseIndex, setRequest.getWeightKg(), setRequest.getReps());
 
         return transactionalOperator.execute(status ->
                 findByIdAndUserId(workoutId, userId)
                         .flatMap(workout -> {
+                            log.info("📋 FOUND WORKOUT: id={}, exercises.size={}", workout.getId(),
+                                    workout.getExercises().size());
+
                             // Validate workout state
                             if (!workout.isActive()) {
+                                log.error("❌ WORKOUT NOT ACTIVE: status={}", workout.getStatus());
                                 return Mono.error(new InvalidWorkoutStateException(
                                         "Cannot log sets for a non-active workout. Current status: " + workout.getStatus()));
                             }
 
                             // Validate exercise index
                             if (exerciseIndex < 0 || exerciseIndex >= workout.getExercises().size()) {
+                                log.error("❌ INVALID EXERCISE INDEX: index={}, available={}",
+                                        exerciseIndex, workout.getExercises().size());
                                 return Mono.error(new ExerciseNotFoundException(
                                         String.format("Exercise index %d not found. Workout has %d exercises.",
                                                 exerciseIndex, workout.getExercises().size())));
                             }
 
-                            // Create the new set with precise performance data
-                            WorkoutSet newSet = createWorkoutSetFromRequest(setRequest);
-
-                            // Add set to the exercise
+                            // Get the exercise
                             WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
+                            log.info("✅ FOUND EXERCISE: name={}, current_sets={}",
+                                    exercise.getExerciseName(), exercise.getSets().size());
+
+                            // Create the new set
+                            WorkoutSet newSet = createWorkoutSetFromRequest(setRequest);
+                            log.info("🎯 CREATED SET: setNumber will be {}, weight={}kg, reps={}",
+                                    exercise.getSets().size() + 1, newSet.getWeightKg(), newSet.getReps());
+
+                            // ✅ NOW THIS WILL WORK: Add set to exercise (using the new addSet method)
                             exercise.addSet(newSet);
 
-                            // Recalculate workout metrics
-                            workout.recalculateMetrics();
+                            log.info("📊 SET ADDED: exercise now has {} sets, workout metrics will be recalculated",
+                                    exercise.getSets().size());
 
                             return workoutRepository.save(workout);
                         })
-                        .publishOn(Schedulers.boundedElastic())
                         .doOnSuccess(savedWorkout -> {
-                            log.info("Successfully logged set for workout {}: {}kg x {} reps",
-                                    workoutId, setRequest.getWeightKg(), setRequest.getReps());
+                            log.info("✅ SET LOGGED SUCCESSFULLY: workoutId={}, exerciseIndex={}, setNumber={}",
+                                    workoutId, exerciseIndex, savedWorkout.getExercises().get(exerciseIndex).getSets().size());
 
                             // Check for personal records asynchronously
                             checkForPersonalRecords(savedWorkout, exerciseIndex)
                                     .subscribe(
-                                            result -> log.info("PR check completed for workout {}", workoutId),
-                                            error -> log.warn("PR check failed for workout {}: {}", workoutId, error.getMessage())
+                                            result -> log.debug("PR check completed for workout {}", workoutId),
+                                            error -> log.warn("PR check failed for workout {} but set was logged successfully: {}",
+                                                    workoutId, error.getMessage())
                                     );
                         })
+                        .doOnError(error -> log.error("❌ FAILED TO LOG SET: workoutId={}, error={}",
+                                workoutId, error.getMessage()))
         ).single();
     }
 
@@ -542,6 +554,7 @@ public class WorkoutService {
                         .doOnSuccess(saved -> log.info("Successfully updated set for workout {}", workoutId))
         ).single();
     }
+
 
     /**
      * Delete a set from an exercise
@@ -597,9 +610,9 @@ public class WorkoutService {
 
     // WORKOUT COMPLETION
 
-    /**
-     * Complete a workout session with comprehensive event publishing
-     */
+    /* ENHANCED: Complete workout with better error handling
+       * This ensures that personal record failures don't prevent workout completion
+    */
     public Mono<Workout> completeWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
         log.info("Completing workout session: {} for user: {}", workoutId, userId);
 
@@ -630,10 +643,15 @@ public class WorkoutService {
                             log.info("Workout saved to database with ID: {} for user: {}",
                                     completedWorkout.getId(), completedWorkout.getUserId());
 
-                            // Create and publish WorkoutCompletedEvent as per acceptance criteria
+                            // Publish events - these should not fail the workout completion
                             return publishWorkoutCompletedEvent(completedWorkout)
-                                    .then(publishExerciseCompletedEvents(completedWorkout))
-                                    .then(checkForPersonalRecordsAllExercises(completedWorkout))
+//                                    .then(publishExerciseCompletedEvents(completedWorkout))
+                                    .then(checkForPersonalRecordsAllExercises(completedWorkout)
+                                            .onErrorResume(error -> {
+                                                log.warn("Personal record processing failed for workout {}, but workout completion succeeded: {}",
+                                                        completedWorkout.getId(), error.getMessage());
+                                                return Mono.empty(); // Don't fail workout completion
+                                            }))
                                     .then(Mono.just(completedWorkout));
                         })
                         .doOnSuccess(workout ->
@@ -655,11 +673,17 @@ public class WorkoutService {
         }
 
         WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
-        return personalRecordService.checkAndUpdatePersonalRecords(
-                workout.getUserId(),
-                exercise.getExerciseId(),
-                exercise.getSets()
-        ).then();
+        return personalRecordService.checkAndUpdatePersonalRecordsWithRetry(
+                        workout.getUserId(),
+                        exercise.getExerciseId(),
+                        exercise.getSets()
+                )
+                .then()
+                .onErrorResume(error -> {
+                    log.warn("Personal record check failed for workout {}, exercise {}: {} - continuing without PR update",
+                            workout.getId(), exercise.getExerciseName(), error.getMessage());
+                    return Mono.empty(); // Don't fail the entire operation
+                });
     }
 
     /**
@@ -667,12 +691,20 @@ public class WorkoutService {
      */
     private Mono<Void> checkForPersonalRecordsAllExercises(Workout workout) {
         return Flux.fromIterable(workout.getExercises())
-                .flatMap(exercise -> personalRecordService.checkAndUpdatePersonalRecords(
-                        workout.getUserId(),
-                        exercise.getExerciseId(),
-                        exercise.getSets()
-                ))
-                .then();
+                .flatMap(exercise -> personalRecordService.checkAndUpdatePersonalRecordsWithRetry(
+                                workout.getUserId(),
+                                exercise.getExerciseId(),
+                                exercise.getSets()
+                        )
+                        .onErrorResume(error -> {
+                            log.warn("Personal record check failed for exercise {} in workout {}: {} - continuing",
+                                    exercise.getExerciseName(), workout.getId(), error.getMessage());
+                            return Mono.just(new ArrayList<>()); // Return empty list on error
+                        }))
+                .then()
+                .doOnSuccess(v -> log.debug("Completed personal record checks for workout: {}", workout.getId()))
+                .doOnError(error -> log.warn("Some personal record checks failed for workout {}: {}",
+                        workout.getId(), error.getMessage()));
     }
 
     // EVENT PUBLISHING
@@ -682,6 +714,8 @@ public class WorkoutService {
      * This ensures the event contains all the data needed for gamification
      */
     private Mono<Void> publishWorkoutCompletedEvent(Workout workout) {
+        log.info("CREATING WORKOUT EVENT: userId={}, workoutId={}, sets={}, reps={}",
+                workout.getUserId(), workout.getId(), workout.getTotalSets(), workout.getTotalReps());
         // Validate required data before creating event
         if (workout.getStartedAt() == null || workout.getCompletedAt() == null) {
             log.warn("Workout {} missing start/end times, using workout date as fallback", workout.getId());
@@ -727,50 +761,50 @@ public class WorkoutService {
     /**
      * Publish individual exercise completed events
      */
-    private Mono<Void> publishExerciseCompletedEvents(Workout workout) {
-        return Flux.fromIterable(workout.getExercises())
-                .flatMap(exercise -> {
-                    // Calculate exercise metrics properly
-                    int setsCompleted = exercise.getSets() != null ? exercise.getSets().size() : 0;
-                    int totalReps = exercise.getTotalReps();
-                    BigDecimal totalVolume = exercise.getTotalVolume();
-                    BigDecimal maxWeight = exercise.getMaxWeight();
-
-                    // Get duration for duration-based exercises (like warm-up)
-                    Integer totalDuration = null;
-                    if (exercise.getSets() != null) {
-                        totalDuration = exercise.getSets().stream()
-                                .filter(set -> set.getDurationSeconds() != null)
-                                .mapToInt(WorkoutSet::getDurationSeconds)
-                                .sum();
-                    }
-
-                    ExerciseCompletedEvent event = ExerciseCompletedEvent.builder()
-                            .userId(workout.getUserId())
-                            .workoutId(workout.getId())
-                            .exerciseId(exercise.getExerciseId())
-                            .exerciseName(exercise.getExerciseName())
-                            .exerciseCategory(exercise.getExerciseCategory())
-                            .setsCompleted(setsCompleted)
-                            .totalReps(totalReps)
-                            .totalVolume(totalVolume)
-                            .maxWeight(maxWeight)
-                            .primaryMuscleGroup(exercise.getPrimaryMuscleGroup())
-                            // Add duration for warmup/cardio exercises
-                            .durationSeconds(totalDuration != null && totalDuration > 0 ? totalDuration : null)
-                            .equipment(exercise.getEquipment())
-                            .build();
-
-                    // Log validation details for debugging
-                    log.debug("Publishing ExerciseCompletedEvent: exerciseId={}, category={}, sets={}, reps={}, duration={}, valid={}",
-                            event.getExerciseId(), event.getExerciseCategory(), event.getSetsCompleted(),
-                            event.getTotalReps(), event.getDurationSeconds(), event.isValid());
-
-                    return transactionalEventPublisher.publishExerciseCompleted(event);
-                })
-                .then()
-                .doOnSuccess(v -> log.info("Published ExerciseCompletedEvents for workout: {}", workout.getId()));
-    }
+//    private Mono<Void> publishExerciseCompletedEvents(Workout workout) {
+//        return Flux.fromIterable(workout.getExercises())
+//                .flatMap(exercise -> {
+//                    // Calculate exercise metrics properly
+//                    int setsCompleted = exercise.getSets() != null ? exercise.getSets().size() : 0;
+//                    int totalReps = exercise.getTotalReps();
+//                    BigDecimal totalVolume = exercise.getTotalVolume();
+//                    BigDecimal maxWeight = exercise.getMaxWeight();
+//
+//                    // Get duration for duration-based exercises (like warm-up)
+//                    Integer totalDuration = null;
+//                    if (exercise.getSets() != null) {
+//                        totalDuration = exercise.getSets().stream()
+//                                .filter(set -> set.getDurationSeconds() != null)
+//                                .mapToInt(WorkoutSet::getDurationSeconds)
+//                                .sum();
+//                    }
+//
+//                    ExerciseCompletedEvent event = ExerciseCompletedEvent.builder()
+//                            .userId(workout.getUserId())
+//                            .workoutId(workout.getId())
+//                            .exerciseId(exercise.getExerciseId())
+//                            .exerciseName(exercise.getExerciseName())
+//                            .exerciseCategory(exercise.getExerciseCategory())
+//                            .setsCompleted(setsCompleted)
+//                            .totalReps(totalReps)
+//                            .totalVolume(totalVolume)
+//                            .maxWeight(maxWeight)
+//                            .primaryMuscleGroup(exercise.getPrimaryMuscleGroup())
+//                            // Add duration for warmup/cardio exercises
+//                            .durationSeconds(totalDuration != null && totalDuration > 0 ? totalDuration : null)
+//                            .equipment(exercise.getEquipment())
+//                            .build();
+//
+//                    // Log validation details for debugging
+//                    log.debug("Publishing ExerciseCompletedEvent: exerciseId={}, category={}, sets={}, reps={}, duration={}, valid={}",
+//                            event.getExerciseId(), event.getExerciseCategory(), event.getSetsCompleted(),
+//                            event.getTotalReps(), event.getDurationSeconds(), event.isValid());
+//
+//                    return transactionalEventPublisher.publishExerciseCompleted(event);
+//                })
+//                .then()
+//                .doOnSuccess(v -> log.info("Published ExerciseCompletedEvents for workout: {}", workout.getId()));
+//    }
 
     // HELPER METHODS
 
