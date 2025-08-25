@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.time.Duration;
 
@@ -36,54 +37,42 @@ public class EventOutboxPublisherScheduler {
      */
     @Scheduled(fixedDelay = FIXED_DELAY_MS)
     public void publishPendingEvents() {
-        log.info("🔄 POLLING FOR PENDING OUTBOX EVENTS...");
+        log.debug("🔄 Checking for pending events...");
 
-        Flux<EventOutbox> eventsToProcess = Flux.concat(
-                        eventOutboxService.getPendingEvents()
-                                .doOnNext(event -> log.info("📨 FOUND PENDING EVENT: id={}, eventId={}, type={}, topic={}, status={}",
-                                        event.getId(), event.getEventId(), event.getEventType(), event.getTopic(), event.getStatus())),
-                        eventOutboxService.getRetryableFailedEvents()
-                                .doOnNext(event -> log.info("🔄 FOUND FAILED EVENT FOR RETRY: id={}, eventId={}, attempts={}",
-                                        event.getId(), event.getEventId(), event.getAttemptCount()))
-                )
+        eventOutboxService.getPendingEvents()
+                .count()
+                .filter(count -> count > 0)
+                .doOnNext(count -> log.info("🔄 FOUND {} PENDING OUTBOX EVENTS", count))
+                .flatMapMany(count -> eventOutboxService.getPendingEvents())
+                .concatWith(eventOutboxService.getRetryableFailedEvents())
                 .distinct(EventOutbox::getId)
                 .filterWhen(event -> {
-                    log.info("🔒 ATTEMPTING TO MARK AS PROCESSING: eventId={}", event.getEventId());
-                    return eventOutboxService.markAsProcessing(event.getId())
-                            .doOnNext(marked -> log.info("🔒 MARK AS PROCESSING RESULT: eventId={}, marked={}", event.getEventId(), marked));
-                });
-
-        eventsToProcess
-                .doOnNext(event -> log.info("📤 STARTING TO PROCESS EVENT: eventId={}, type={}, topic={}",
-                        event.getEventId(), event.getEventType(), event.getTopic()))
-                .flatMap(this::processEvent)
-                .doOnComplete(() -> log.info("✅ FINISHED PROCESSING ALL EVENTS IN THIS CYCLE"))
-                .subscribe(
-                        null,
-                        error -> log.error("❌ SCHEDULER STREAM ERROR: {}", error.getMessage(), error),
-                        () -> log.debug("🔄 SCHEDULER CYCLE COMPLETED")
-                );
+                    log.info("🔒 MARKING AS PROCESSING: eventId={}", event.getEventId());
+                    return eventOutboxService.markAsProcessing(event.getId());
+                })
+                .flatMap(this::processEventWithRetry)
+                .subscribe();
     }
 
-    private Mono<Void> processEvent(EventOutbox event) {
+    private Mono<Void> processEventWithRetry(EventOutbox event) {
         return deserializeEvent(event)
-                .flatMap(eventPayload -> sendToKafka(event, eventPayload))
-                .flatMap(sendResult -> {
-                    log.info("✅ KAFKA SEND SUCCESS - MARKING AS PUBLISHED: eventId={}", event.getEventId());
-                    return eventOutboxService.markAsPublished(event.getId());
-                })
-                .doOnSuccess(v -> log.info("🎉 EVENT SUCCESSFULLY PUBLISHED: eventId={} to topic={}",
-                        event.getEventId(), event.getTopic()))
-                .onErrorResume(ex -> {
-                    log.error("❌ EVENT PROCESSING FAILED: eventId={}, error={}", event.getEventId(), ex.getMessage());
-                    return eventOutboxService.markAsFailed(event.getId(), "Processing error: " + ex.getMessage());
+                .flatMap(eventPayload -> sendToKafkaWithRetry(event, eventPayload))
+                .flatMap(result -> eventOutboxService.markAsPublished(event.getId()))
+                .doOnSuccess(v -> log.info("🎉 EVENT SUCCESSFULLY PUBLISHED: eventId={}", event.getEventId()))
+                .onErrorResume(error -> {
+                    log.error("❌ EVENT PROCESSING FAILED: eventId={}, error={}",
+                            event.getEventId(), error.getMessage());
+                    return eventOutboxService.markAsFailed(event.getId(),
+                            "Processing error: " + error.getMessage());
                 })
                 .then();
     }
 
+
     private Mono<Object> deserializeEvent(EventOutbox event) {
         return Mono.fromCallable(() -> {
             log.info("🔍 DESERIALIZING EVENT: eventId={}, type={}", event.getEventId(), event.getEventType());
+
             try {
                 String className = getEventClassPath(event.getEventType());
                 log.info("📋 USING CLASS: {}", className);
@@ -99,19 +88,37 @@ public class EventOutboxPublisherScheduler {
         });
     }
 
-    private Mono<org.springframework.kafka.support.SendResult<String, Object>> sendToKafka(EventOutbox event, Object eventPayload) {
-        log.info("📤 SENDING TO KAFKA: eventId={}, topic={}, key={}, payload={}",
-                event.getEventId(), event.getTopic(), event.getMessageKey(), eventPayload.getClass().getSimpleName());
+    // ✅ IMPROVED: Better Kafka send with retry and timeout
+    private Mono<org.springframework.kafka.support.SendResult<String, Object>> sendToKafkaWithRetry(EventOutbox event, Object eventPayload) {
+        log.info("📤 SENDING TO KAFKA: eventId={}, topic={}, key={}",
+                event.getEventId(), event.getTopic(), event.getMessageKey());
 
-        return Mono.fromFuture(kafkaTemplate.send(event.getTopic(), event.getMessageKey(), eventPayload).toCompletableFuture())
-                .timeout(Duration.ofSeconds(10))
-                .doOnNext(sendResult -> log.info("📨 KAFKA SEND RESULT: topic={}, partition={}, offset={}, timestamp={}",
-                        sendResult.getRecordMetadata().topic(),
-                        sendResult.getRecordMetadata().partition(),
-                        sendResult.getRecordMetadata().offset(),
-                        sendResult.getRecordMetadata().timestamp()))
-                .doOnError(error -> log.error("❌ KAFKA SEND FAILED: eventId={}, topic={}, error={}",
-                        event.getEventId(), event.getTopic(), error.getMessage()));
+        return Mono.fromCallable(() -> {
+                    // Test if we can create a producer first
+                    try {
+                        log.debug("🔧 Testing Kafka producer creation...");
+                        kafkaTemplate.getProducerFactory().createProducer();
+                        log.debug("✅ Kafka producer test successful");
+                        return true;
+                    } catch (Exception e) {
+                        log.error("❌ Kafka producer creation failed: {}", e.getMessage());
+                        throw new RuntimeException("Failed to construct kafka producer: " + e.getMessage(), e);
+                    }
+                })
+                .flatMap(success -> {
+                    // If producer test passes, send the message
+                    return Mono.fromFuture(kafkaTemplate.send(event.getTopic(), event.getMessageKey(), eventPayload)
+                                    .toCompletableFuture())
+                            .timeout(Duration.ofSeconds(10))
+                            .doOnNext(result -> log.info("📨 KAFKA SEND SUCCESS: eventId={}, offset={}",
+                                    event.getEventId(), result.getRecordMetadata().offset()))
+                            .doOnError(error -> log.error("❌ KAFKA SEND FAILED: eventId={}, error={}",
+                                    event.getEventId(), error.getMessage()));
+                })
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof RuntimeException)
+                        .doBeforeRetry(retrySignal -> log.warn("🔄 RETRYING KAFKA SEND: attempt {}",
+                                retrySignal.totalRetries() + 1)));
     }
 
     @Scheduled(fixedRate = CLEANUP_DELAY_MS)
