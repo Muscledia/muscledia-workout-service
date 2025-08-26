@@ -17,12 +17,22 @@ public class JwtService {
     @Value("${jwt.secret}")
     private String secretKey;
 
+    @Value("${jwt.expiration:86400000}")
+    private int jwtExpirationMs;
+
     @Value("${jwt.issuer}")
     private String issuer;
 
     private SecretKey getSigningKey() {
-        byte[] keyBytes = Base64.getDecoder().decode(secretKey);
-        return Keys.hmacShaKeyFor(keyBytes);
+        // Compatible with User Service - handles both base64 and raw secret
+        try {
+            // Try base64 decoding first (as your User Service does)
+            return Keys.hmacShaKeyFor(Base64.getDecoder().decode(secretKey));
+        } catch (IllegalArgumentException e) {
+            // Fallback to raw bytes if not base64
+            log.debug("Secret is not base64 encoded, using raw bytes");
+            return Keys.hmacShaKeyFor(secretKey.getBytes());
+        }
     }
 
     public boolean validateToken(String token) {
@@ -108,13 +118,13 @@ public class JwtService {
         return extractClaims(token).get("role", String.class);
     }
 
-    @SuppressWarnings("unchecked")
-    public Set<String> extractPermissions(String token) {
-        List<String> permissions = extractClaims(token).get("permissions", List.class);
-        return new HashSet<>(permissions != null ? permissions : Collections.emptyList());
-    }
 
     public boolean isTokenExpired(String token) {
-        return extractClaims(token).getExpiration().before(new Date());
+        try {
+            Claims claims = extractClaims(token);
+            return claims.getExpiration().before(new Date());
+        } catch (Exception e) {
+            return true;
+        }
     }
 }

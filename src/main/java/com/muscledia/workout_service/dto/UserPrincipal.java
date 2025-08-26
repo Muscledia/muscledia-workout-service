@@ -2,50 +2,85 @@ package com.muscledia.workout_service.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
 
-import java.util.Set;
+import java.util.Collection;
+import java.util.List;
 
 @Data
 @AllArgsConstructor
-public class UserPrincipal {
+@NoArgsConstructor
+public class UserPrincipal implements UserDetails {
     private Long userId;
     private String username;
-    private String role;
-    private Set<String> permissions; // Add permissions support
+    private List<? extends GrantedAuthority> authorities;
 
-    // Existing methods
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return authorities;
+    }
+
+    @Override
+    public String getPassword() {
+        return null;
+    }
+
+    @Override
+    public String getUsername() {
+        return username;
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return UserDetails.super.isEnabled();
+    }
+
+    /**
+     * Get user ID as Long
+     */
+    public Long getUserId() {
+        return userId;
+    }
+
+    /**
+     * Check if user has a specific role
+     */
     public boolean hasRole(String role) {
-        return this.role.equals(role);
+        return authorities.stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_" + role.toUpperCase()));
     }
 
-    public boolean isAdmin() {
-        return "ADMIN".equals(this.role);
-    }
-
-    // New permission-based methods
-    public boolean hasPermission(String permission) {
-        return permissions != null && permissions.contains(permission);
-    }
-
-    public boolean hasAnyPermission(String... permissions) {
-        if (this.permissions == null)
-            return false;
-        for (String permission : permissions) {
-            if (this.permissions.contains(permission)) {
+    /**
+     * Check if user has any of the specified roles
+     */
+    public boolean hasAnyRole(String... roles) {
+        for (String role : roles) {
+            if (hasRole(role)) {
                 return true;
             }
         }
         return false;
     }
 
-    public boolean hasAllPermissions(String... permissions) {
-        if (this.permissions == null)
-            return false;
-        for (String permission : permissions) {
-            if (!this.permissions.contains(permission)) {
-                return false;
-            }
-        }
-        return true;
+
+    public boolean isAdmin() {
+        return hasRole("ADMIN");
     }
 }
