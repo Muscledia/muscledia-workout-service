@@ -117,6 +117,77 @@ public class WorkoutPlanService {
                 .doOnSuccess(saved -> log.debug("Saved workout plan to personal collection for user: {}", userId));
     }
 
+    /**
+     * NEW: Check if user has saved a plan to their personal collection
+     * This is crucial for plan access validation when starting workouts
+     */
+    public Mono<Boolean> hasUserSavedPlan(Long userId, String planId) {
+        log.debug("Checking if user {} has saved plan {} to personal collection", userId, planId);
+
+        return workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
+                .filter(plan -> planId.equals(plan.getId()))
+                .hasElements()
+                .doOnNext(hasSaved -> log.debug("User {} {} saved plan {} to personal collection",
+                        userId, hasSaved ? "has" : "has not", planId));
+    }
+
+    /**
+     * NEW: Increment plan usage count when a workout is started from this plan
+     * This tracks how popular/useful each plan is
+     */
+    public Mono<Void> incrementPlanUsage(String planId, Long userId) {
+        log.debug("Incrementing usage count for plan: {} (user: {})", planId, userId);
+
+        return findById(planId)
+                .flatMap(plan -> {
+                    plan.setUsageCount(plan.getUsageCount() + 1);
+                    plan.setUpdatedAt(LocalDateTime.now());
+                    return workoutPlanRepository.save(plan);
+                })
+                .then()
+                .doOnSuccess(v -> log.debug("Successfully incremented usage count for plan: {}", planId))
+                .doOnError(error -> log.warn("Failed to increment usage count for plan {}: {}", planId, error.getMessage()));
+    }
+
+    /**
+     * NEW: Get recently used workout plans for a user
+     * This helps users quickly restart their favorite routines
+     */
+    public Flux<WorkoutPlan> findRecentlyUsedPlans(Long userId, int limit) {
+        log.debug("Finding {} recently used plans for user: {}", limit, userId);
+
+        // This would ideally track actual usage from workout history
+        // For now, return user's personal plans ordered by usage count
+        return workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
+                .sort((p1, p2) -> Long.compare(p2.getUsageCount(), p1.getUsageCount()))
+                .take(limit)
+                .doOnComplete(() -> log.debug("Retrieved recently used plans for user: {}", userId));
+    }
+
+    /**
+     * NEW: Get AI-powered workout plan recommendations
+     * This could be enhanced with ML algorithms based on user preferences/history
+     */
+    public Flux<WorkoutPlan> getRecommendedPlans(Long userId) {
+        log.debug("Getting recommended plans for user: {}", userId);
+
+        // Simple recommendation: popular public plans + user's saved plans
+        // This could be enhanced with sophisticated ML algorithms
+        return Flux.concat(
+                        // User's most used personal plans
+                        workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
+                                .sort((p1, p2) -> Long.compare(p2.getUsageCount(), p1.getUsageCount()))
+                                .take(3),
+
+                        // Popular public plans
+                        workoutPlanRepository.findByIsPublicTrue()
+                                .sort((p1, p2) -> Long.compare(p2.getUsageCount(), p1.getUsageCount()))
+                                .take(5)
+                )
+                .distinct(WorkoutPlan::getId)
+                .doOnComplete(() -> log.debug("Retrieved recommended plans for user: {}", userId));
+    }
+
     public Flux<WorkoutPlan> findPersonalWorkoutPlans(Long userId) {
         return workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
                 .doOnComplete(() -> log.debug("Retrieved personal workout plans for user: {}", userId));

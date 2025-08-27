@@ -103,6 +103,7 @@ public class WorkoutExercise {
         }
         set.setSetNumber(this.sets.size() + 1);
         this.sets.add(set);
+        recalculateMetrics();
     }
 
     /**
@@ -292,4 +293,25 @@ public class WorkoutExercise {
                 .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
     }
+
+
+    /**
+     * Recalculate metrics after sets are modified
+     * This method should be called whenever sets are added, removed, or modified
+     */
+    public void recalculateMetrics() {
+        // Since your getters already calculate these values dynamically,
+        // this method can be empty or just validate the sets
+
+        if (this.sets != null && !this.sets.isEmpty()) {
+            // Optionally: validate all sets
+            for (WorkoutSet set : this.sets) {
+                if (!set.isValid()) {
+                    // Log warning or handle invalid set
+                    System.out.println("Warning: Invalid set found in exercise " + this.exerciseName);
+                }
+            }
+        }
+    }
+
 }

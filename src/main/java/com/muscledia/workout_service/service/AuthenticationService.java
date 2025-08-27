@@ -19,55 +19,25 @@ public class AuthenticationService {
     public Mono<Long> getCurrentUserId() {
         // This is where you would get the NullPointerException. We prevent it below.
         return ReactiveSecurityContextHolder.getContext()
-                .mapNotNull(context -> {
-                    Authentication authentication = context.getAuthentication();
-                    if (authentication instanceof JwtAuthenticationToken jwtAuthToken) {
-                        Object principal = jwtAuthToken.getPrincipal();
-                        if (principal instanceof UserPrincipal userPrincipal) {
-                            log.debug("Current user ID: {}", userPrincipal.getUserId());
-                            return userPrincipal.getUserId();
-                        } else {
-                            log.warn("Authentication principal is not UserPrincipal: {}", principal);
-                            return null; // Return null if not expected type
-                        }
-                    } else {
-                        log.warn("Authentication is not JwtAuthenticationToken: {}", authentication);
-                        return null; // Return null if not a JWT token
-                    }
-                })
-                .flatMap(Mono::justOrEmpty)
-                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user or invalid token.")));
+                .map(SecurityContext::getAuthentication)
+                .cast(JwtAuthenticationToken.class)
+                .map(auth -> (UserPrincipal) auth.getPrincipal())
+                .map(UserPrincipal::getUserId)
+                .doOnNext(userId -> log.debug("Current user ID: {}", userId))
+                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user found")));
     }
 
     public Mono<UserPrincipal> getCurrentUser() {
         return ReactiveSecurityContextHolder.getContext()
                 .map(SecurityContext::getAuthentication)
-                .flatMap(authentication -> { // Use flatMap here too
-                    if (authentication instanceof JwtAuthenticationToken jwtAuthToken) {
-                        Object principal = jwtAuthToken.getPrincipal();
-                        if (principal instanceof UserPrincipal userPrincipal) {
-                            log.debug("Current user: {} with role: {}", userPrincipal.getUsername(), userPrincipal.getRole());
-                            return Mono.just(userPrincipal);
-                        } else {
-                            log.warn("Authentication principal is not UserPrincipal: {}", principal);
-                            return Mono.empty();
-                        }
-                    } else {
-                        log.warn("Authentication is not JwtAuthenticationToken: {}", authentication.getClass().getName());
-                        return Mono.empty();
-                    }
-                })
-                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user or invalid principal found")));
+                .cast(JwtAuthenticationToken.class)
+                .map(auth -> (UserPrincipal) auth.getPrincipal())
+                .doOnNext(user -> log.debug("Current user: {}", user))
+                .switchIfEmpty(Mono.error(new UnauthorizedException("No authenticated user found")));
     }
 
     public Mono<String> getCurrentUsername() {
-        return getCurrentUser()
-                .map(UserPrincipal::getUsername);
-    }
-
-    public Mono<String> getCurrentUserRole() {
-        return getCurrentUser()
-                .map(UserPrincipal::getRole);
+        return getCurrentUser().map(UserPrincipal::getUsername);
     }
 
     public Mono<Boolean> hasRole(String role) {
@@ -76,28 +46,13 @@ public class AuthenticationService {
                 .defaultIfEmpty(false);
     }
 
-    public Mono<Boolean> hasPermission(String permission) {
-        return getCurrentUser()
-                .map(user -> user.hasPermission(permission))
-                .defaultIfEmpty(false)
-                .doOnNext(hasPermission -> log.debug("User has permission '{}': {}", permission, hasPermission));
-    }
-
-    public Mono<Boolean> hasAnyPermission(String... permissions) {
-        return getCurrentUser()
-                .map(user -> user.hasAnyPermission(permissions))
-                .defaultIfEmpty(false);
-    }
-
-    public Mono<Boolean> hasAllPermissions(String... permissions) {
-        return getCurrentUser()
-                .map(user -> user.hasAllPermissions(permissions))
-                .defaultIfEmpty(false);
-    }
-
     public Mono<Boolean> isAdmin() {
+        return hasRole("ADMIN");
+    }
+
+    public Mono<Boolean> canAccessResource(Long resourceUserId) {
         return getCurrentUser()
-                .map(UserPrincipal::isAdmin)
+                .map(user -> user.isAdmin() || user.getUserId().equals(resourceUserId))
                 .defaultIfEmpty(false);
     }
 
@@ -107,16 +62,4 @@ public class AuthenticationService {
                 .defaultIfEmpty(false);
     }
 
-    public Mono<Boolean> canAccessResource(Long resourceUserId) {
-        return getCurrentUser()
-                .flatMap(user -> {
-                    // Admin can access any resource
-                    if (user.isAdmin()) {
-                        return Mono.just(true);
-                    }
-                    // User can only access their own resources
-                    return Mono.just(user.getUserId().equals(resourceUserId));
-                })
-                .defaultIfEmpty(false);
-    }
 }

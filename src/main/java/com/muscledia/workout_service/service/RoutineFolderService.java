@@ -187,6 +187,12 @@ public class RoutineFolderService {
         personalFolder.setCreatedAt(LocalDateTime.now());
         personalFolder.setUpdatedAt(LocalDateTime.now());
 
+        // CRITICAL FIX: ALWAYS generate a unique ID to avoid null conflicts
+        // Don't ever set hevyId to null for personal folders
+        personalFolder.setHevyId(generateUniqueInternalId());
+
+        log.debug("Generated unique hevyId for personal folder: {}", personalFolder.getHevyId());
+
         // 2. Save the new private routine folder first to get its new ID
         return routineFolderRepository.save(personalFolder)
                 .doOnSuccess(saved -> log.debug("Saved personal folder: '{}' (ID: {})", saved.getTitle(), saved.getId()))
@@ -223,6 +229,13 @@ public class RoutineFolderService {
                                 }
                             });
                 });
+    }
+
+    // Helper method to generate unique internal ID
+    private Long generateUniqueInternalId() {
+        // Generate a unique Long ID for internal use
+        // This could be a timestamp-based ID or any other unique generation strategy
+        return System.currentTimeMillis() + (long)(Math.random() * 1000);
     }
 
     /**

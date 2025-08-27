@@ -44,16 +44,16 @@ public class TransactionalEventPublisher {
      * @param event The ExerciseCompletedEvent to publish.
      * @return Mono<Void> indicating completion.
      */
-    public Mono<Void> publishExerciseCompleted(ExerciseCompletedEvent event) {
-        if (!event.isValid()) {
-            log.error("Invalid ExerciseCompletedEvent: {}", event);
-            return Mono.error(new IllegalArgumentException("Invalid ExerciseCompletedEvent provided."));
-        }
-        log.info("Attempting to publish ExerciseCompletedEvent for user {} and exercise {}", event.getUserId(), event.getExerciseName());
-        // Use transactionalOperator to ensure storeForPublishing is part of the calling transaction
-        return eventOutboxService.storeForPublishing(event)
-                .doOnSuccess(saved -> log.info("ExerciseCompletedEvent for user {} and exercise {} stored in outbox.", event.getUserId(), event.getExerciseName()))
-                .then(); // Convert to Mono<Void>
-    }
+//    public Mono<Void> publishExerciseCompleted(ExerciseCompletedEvent event) {
+//        if (!event.isValid()) {
+//            log.error("Invalid ExerciseCompletedEvent: {}", event);
+//            return Mono.error(new IllegalArgumentException("Invalid ExerciseCompletedEvent provided."));
+//        }
+//        log.info("Attempting to publish ExerciseCompletedEvent for user {} and exercise {}", event.getUserId(), event.getExerciseName());
+//        // Use transactionalOperator to ensure storeForPublishing is part of the calling transaction
+//        return eventOutboxService.storeForPublishing(event)
+//                .doOnSuccess(saved -> log.info("ExerciseCompletedEvent for user {} and exercise {} stored in outbox.", event.getUserId(), event.getExerciseName()))
+//                .then(); // Convert to Mono<Void>
+//    }
 
 }

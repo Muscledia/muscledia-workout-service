@@ -10,6 +10,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Request to start a new workout session
@@ -28,6 +29,10 @@ public class StartWorkoutRequest {
     @Schema(description = "Reference to workout plan template (optional)")
     @JsonProperty("workoutPlanId")
     private String workoutPlanId;
+
+    private boolean useWorkoutPlan = true; // Auto-populate from plan
+    private List<String> excludeExerciseIds; // Skip certain exercises
+    private Map<String, Object> customizations; // Override plan defaults
 
     @Schema(description = "Type of workout", example = "STRENGTH",
             allowableValues = {"STRENGTH", "CARDIO", "FLEXIBILITY", "SPORTS", "MIXED"})

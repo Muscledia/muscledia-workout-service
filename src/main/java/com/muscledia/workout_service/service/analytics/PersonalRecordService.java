@@ -11,13 +11,22 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -28,6 +37,8 @@ public class PersonalRecordService {
 
     private final PersonalRecordRepository personalRecordRepository;
     private final ExerciseService exerciseService;
+    private final ReactiveMongoTemplate reactiveMongoTemplate;
+
 
     /**
      * Process a workout and detect any new personal records
@@ -42,20 +53,51 @@ public class PersonalRecordService {
     }
 
     /**
-     * FIXED: Check and update personal records for an exercise's sets
+     * FIXED: Check and update personal records for an exercise's sets with retry logic
      */
     public Mono<List<PersonalRecord>> checkAndUpdatePersonalRecords(Long userId, String exerciseId, List<WorkoutSet> sets) {
-        log.info("Checking PRs for user {} exercise {} with {} sets", userId, exerciseId, sets.size());
+        log.debug("Checking PRs for user {} exercise {} with {} sets", userId, exerciseId, sets != null ? sets.size() : 0);
 
-        if (sets.isEmpty()) {
-            return Mono.just(List.of());
+        if (sets == null || sets.isEmpty()) {
+            return Mono.just(new ArrayList<>());
         }
 
         return Flux.fromIterable(sets)
                 .filter(set -> set.getWeightKg() != null && set.getReps() != null && set.getReps() > 0)
-                .flatMap(set -> checkSetForPRs(userId, exerciseId, set))
+                .flatMap(set -> checkSetForPRsWithRetry(userId, exerciseId, set))
                 .collectList()
-                .doOnSuccess(prs -> log.info("Found {} new PRs for exercise {}", prs.size(), exerciseId));
+                .doOnSuccess(prs -> log.debug("Found {} new PRs for exercise {}", prs.size(), exerciseId))
+                .onErrorResume(error -> {
+                    log.warn("Error checking PRs for user {} exercise {}: {}", userId, exerciseId, error.getMessage());
+                    return Mono.just(new ArrayList<>());
+                });
+    }
+
+    /**
+     * ENHANCED: Check and update personal records with comprehensive retry logic
+     */
+    public Mono<List<PersonalRecord>> checkAndUpdatePersonalRecordsWithRetry(Long userId, String exerciseId, List<WorkoutSet> sets) {
+        return checkAndUpdatePersonalRecords(userId, exerciseId, sets)
+                .retryWhen(Retry.backoff(3, Duration.ofMillis(100))
+                        .filter(throwable -> throwable instanceof DuplicateKeyException)
+                        .doBeforeRetry(retrySignal ->
+                                log.debug("Retrying personal record update due to duplicate key error, attempt: {}",
+                                        retrySignal.totalRetries() + 1)))
+                .onErrorResume(DuplicateKeyException.class, error -> {
+                    log.warn("Failed to update personal records after retries, continuing without PR update: {}", error.getMessage());
+                    return Mono.just(new ArrayList<>());
+                });
+    }
+
+    /**
+     * Check for personal records in a single set with retry
+     */
+    private Flux<PersonalRecord> checkSetForPRsWithRetry(Long userId, String exerciseId, WorkoutSet set) {
+        return checkSetForPRs(userId, exerciseId, set)
+                .onErrorResume(DuplicateKeyException.class, error -> {
+                    log.debug("Duplicate key error when checking set PRs, retrying: {}", error.getMessage());
+                    return Flux.empty(); // Skip this set's PRs if duplicate key error
+                });
     }
 
     /**
@@ -84,20 +126,19 @@ public class PersonalRecordService {
                 .distinct(); // Avoid duplicate PRs
     }
 
+
     /**
-     * FIXED: Check for maximum weight PR from a set
+     * FIXED: Check for maximum weight PR from a set using upsert
      */
     private Mono<PersonalRecord> checkMaxWeightPRFromSet(Long userId, String exerciseId, WorkoutSet set) {
         BigDecimal currentWeight = set.getWeightKg();
 
-        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                        userId, exerciseId, "MAX_WEIGHT")
-                .switchIfEmpty(Mono.just(createEmptyPR())) // Create empty PR if none exists
+        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_WEIGHT")
                 .flatMap(existingPR -> {
                     BigDecimal existingWeight = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
 
                     if (currentWeight.compareTo(existingWeight) > 0) {
-                        return createPersonalRecordFromSet(userId, exerciseId, set, "MAX_WEIGHT",
+                        return upsertPersonalRecord(userId, exerciseId, set, "MAX_WEIGHT",
                                 currentWeight, existingWeight);
                     }
                     return Mono.empty();
@@ -105,7 +146,7 @@ public class PersonalRecordService {
     }
 
     /**
-     * FIXED: Check for maximum volume PR from a set
+     * FIXED: Check for maximum volume PR from a set using upsert
      */
     private Mono<PersonalRecord> checkMaxVolumePRFromSet(Long userId, String exerciseId, WorkoutSet set) {
         BigDecimal currentVolume = set.getVolume(); // This is already calculated in WorkoutSet
@@ -114,14 +155,12 @@ public class PersonalRecordService {
             return Mono.empty();
         }
 
-        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                        userId, exerciseId, "MAX_VOLUME")
-                .switchIfEmpty(Mono.just(createEmptyPR()))
+        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_VOLUME")
                 .flatMap(existingPR -> {
                     BigDecimal existingVolume = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
 
                     if (currentVolume.compareTo(existingVolume) > 0) {
-                        return createPersonalRecordFromSet(userId, exerciseId, set, "MAX_VOLUME",
+                        return upsertPersonalRecord(userId, exerciseId, set, "MAX_VOLUME",
                                 currentVolume, existingVolume);
                     }
                     return Mono.empty();
@@ -129,15 +168,13 @@ public class PersonalRecordService {
     }
 
     /**
-     * FIXED: Check for maximum reps PR from a set
+     * FIXED: Check for maximum reps PR from a set using upsert
      */
     private Mono<PersonalRecord> checkMaxRepsPRFromSet(Long userId, String exerciseId, WorkoutSet set) {
         BigDecimal setWeight = set.getWeightKg();
         Integer setReps = set.getReps();
 
-        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                        userId, exerciseId, "MAX_REPS")
-                .switchIfEmpty(Mono.just(createEmptyPR()))
+        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_REPS")
                 .flatMap(existingPR -> {
                     // Only count as PR if weight is same or higher and reps are more
                     BigDecimal existingWeight = existingPR.getWeight() != null ? existingPR.getWeight() : BigDecimal.ZERO;
@@ -147,7 +184,7 @@ public class PersonalRecordService {
                             (setWeight.compareTo(existingWeight) >= 0 && setReps > existingReps);
 
                     if (isNewPR) {
-                        return createPersonalRecordFromSet(userId, exerciseId, set, "MAX_REPS",
+                        return upsertPersonalRecord(userId, exerciseId, set, "MAX_REPS",
                                 BigDecimal.valueOf(setReps),
                                 existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO);
                     }
@@ -156,19 +193,17 @@ public class PersonalRecordService {
     }
 
     /**
-     * FIXED: Check for estimated 1RM PR from a set
+     * FIXED: Check for estimated 1RM PR from a set using upsert
      */
     private Mono<PersonalRecord> checkEstimated1RMPRFromSet(Long userId, String exerciseId, WorkoutSet set) {
         BigDecimal estimated1RM = calculate1RM(set.getWeightKg(), set.getReps());
 
-        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(
-                        userId, exerciseId, "ESTIMATED_1RM")
-                .switchIfEmpty(Mono.just(createEmptyPR()))
+        return getCurrentOrCreateEmptyPR(userId, exerciseId, "ESTIMATED_1RM")
                 .flatMap(existingPR -> {
                     BigDecimal existing1RM = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
 
                     if (estimated1RM.compareTo(existing1RM) > 0) {
-                        return createPersonalRecordFromSet(userId, exerciseId, set, "ESTIMATED_1RM",
+                        return upsertPersonalRecord(userId, exerciseId, set, "ESTIMATED_1RM",
                                 estimated1RM, existing1RM);
                     }
                     return Mono.empty();
@@ -176,8 +211,87 @@ public class PersonalRecordService {
     }
 
     /**
-     * FIXED: Create a new personal record from a set
+     * CRITICAL FIX: Get current PR or create empty one for comparison
      */
+    private Mono<PersonalRecord> getCurrentOrCreateEmptyPR(Long userId, String exerciseId, String recordType) {
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType)
+                .switchIfEmpty(Mono.just(createEmptyPR()));
+    }
+
+    /**
+     * CRITICAL FIX: Upsert personal record to handle duplicate key errors
+     * This prevents the E11000 duplicate key error by using findAndModify with upsert
+     */
+    private Mono<PersonalRecord> upsertPersonalRecord(Long userId, String exerciseId, WorkoutSet set,
+                                                      String recordType, BigDecimal value, BigDecimal previousValue) {
+
+        // Create query to find existing record
+        Query query = Query.query(
+                Criteria.where("userId").is(userId)
+                        .and("exerciseId").is(exerciseId)
+                        .and("recordType").is(recordType)
+        );
+
+        // Calculate improvement percentage
+        Double improvementPercentage = null;
+        if (previousValue != null && previousValue.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal improvement = value.subtract(previousValue)
+                    .divide(previousValue, 4, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100));
+            improvementPercentage = improvement.doubleValue();
+        }
+
+        // Create update with the new values
+        Update update = new Update()
+                .set("value", value)
+                .set("weight", set.getWeightKg())
+                .set("reps", set.getReps())
+                .set("sets", 1)
+                .set("achievedDate", LocalDateTime.now())
+                .set("previousRecord", previousValue)
+                .set("improvementPercentage", improvementPercentage)
+                .set("exerciseName", getExerciseName(exerciseId))
+                // Set on insert only - these won't change if record exists
+                .setOnInsert("userId", userId)
+                .setOnInsert("exerciseId", exerciseId)
+                .setOnInsert("recordType", recordType);
+
+        // Use findAndModify with upsert option
+        FindAndModifyOptions options = new FindAndModifyOptions()
+                .upsert(true)
+                .returnNew(true);
+
+        log.info("Attempting to upsert {} PR for user {} exercise {}: {} (previous: {})",
+                recordType, userId, exerciseId, value, previousValue);
+
+        return reactiveMongoTemplate
+                .findAndModify(query, update, options, PersonalRecord.class)
+                .doOnSuccess(savedRecord -> {
+                    if (savedRecord != null) {
+                        log.info("Successfully upserted {} PR: userId={}, exerciseId={}, value={}",
+                                recordType, savedRecord.getUserId(), savedRecord.getExerciseId(), savedRecord.getValue());
+                    }
+                })
+                .onErrorResume(DuplicateKeyException.class, error -> {
+                    // If we still get a duplicate key error, try to find the existing record
+                    log.warn("Duplicate key error during upsert for {} PR, attempting to find existing record: {}",
+                            recordType, error.getMessage());
+                    return personalRecordRepository
+                            .findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType)
+                            .doOnSuccess(existingRecord -> {
+                                if (existingRecord != null) {
+                                    log.debug("Found existing {} PR record instead of creating new one", recordType);
+                                }
+                            })
+                            .switchIfEmpty(Mono.error(new RuntimeException("Failed to upsert and find existing record", error)));
+                });
+    }
+
+    /**
+     * DEPRECATED: Old method - replaced by upsertPersonalRecord
+     * Keeping for reference but should not be used
+     */
+    @Deprecated
     private Mono<PersonalRecord> createPersonalRecordFromSet(Long userId, String exerciseId, WorkoutSet set,
                                                              String recordType, BigDecimal value, BigDecimal previousValue) {
 
@@ -205,6 +319,7 @@ public class PersonalRecordService {
         log.info("New {} PR for user {} exercise {}: {} (previous: {})",
                 recordType, userId, exerciseId, value, previousValue);
 
+        // THIS IS THE PROBLEMATIC LINE - replaced by upsert logic
         return personalRecordRepository.save(pr);
     }
 

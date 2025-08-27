@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,14 +20,11 @@ import java.util.Map;
  */
 @Configuration
 @EnableKafka
-
+@Slf4j
 public class KafkaConfig {
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
-
-    @Value("${spring.kafka.producer.transaction-id-prefix:workout-service-tx-}")
-    private String transactionIdPrefix;
 
     // ===============================
     // PRODUCER CONFIGURATION
@@ -41,23 +39,25 @@ public class KafkaConfig {
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
 
-        // Performance Optimizations
-        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384); // 16KB batches
-        props.put(ProducerConfig.LINGER_MS_CONFIG, 10); // Wait up to 10ms for batching
-        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432); // 32MB buffer
+        // ✅ CRITICAL: Connection and timeout settings
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
+        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 120000);
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 60000);
+
+        // ✅ CRITICAL: Connection setup timeouts
+        props.put("socket.connection.setup.timeout.ms", 10000);
+        props.put("socket.connection.setup.timeout.max.ms", 30000);
+
+        // Performance settings
+        props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
+        props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
+        props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432);
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "gzip");
 
-        // Reliability Configuration
-        props.put(ProducerConfig.ACKS_CONFIG, "1"); // Leader acknowledgment
+        // Reliability Configuration (NO TRANSACTIONS)
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.RETRIES_CONFIG, 3);
         props.put(ProducerConfig.RETRY_BACKOFF_MS_CONFIG, 100);
-        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30000);
-
-        // Idempotent producer for exactly-once delivery semantics (recommended)
-        props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-
-        // Transactional Producer (if using Spring's Kafka transaction manager)
-        props.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, transactionIdPrefix);
 
 
         // JSON Serialization Configuration: IMPORTANT for cross-service type mapping
@@ -66,12 +66,20 @@ public class KafkaConfig {
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, true);
         props.put(JsonSerializer.TYPE_MAPPINGS, getTypeMapping());
 
-        return new DefaultKafkaProducerFactory<>(props);
+
+        DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(props);
+
+        log.info("✅ KAFKA PRODUCER FACTORY CREATED - transactionCapable: {}", factory.transactionCapable());
+        return factory;
     }
 
     @Bean
     public KafkaTemplate<String, Object> kafkaTemplate() {
-        return new KafkaTemplate<>(producerFactory());
+        log.info("🔧 CREATING KAFKA TEMPLATE");
+        KafkaTemplate<String, Object> template = new KafkaTemplate<>(producerFactory());
+
+        log.info("✅ KAFKA TEMPLATE CREATED");
+        return template;
     }
 
     /**
@@ -82,10 +90,8 @@ public class KafkaConfig {
      */
     private String getTypeMapping() {
         // Only include types that THIS service will publish.
-        // The keys "WORKOUT_COMPLETED" and "EXERCISE_COMPLETED" must match
-        // what Gamification_service's BaseEvent @JsonSubTypes expects.
-        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent," +
-                "exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
+        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent";
+                //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
 
 

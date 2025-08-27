@@ -18,6 +18,7 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -59,19 +60,16 @@ public class JwtAuthenticationWebFilter implements WebFilter {
 
             Long userId = jwtService.extractUserId(token);
             String username = jwtService.extractUsername(token);
-            String role = jwtService.extractRole(token);
-            Set<String> permissions = jwtService.extractPermissions(token);
+            List<String> roles = jwtService.extractRoles(token);
 
-            log.debug("Authenticated user: {} with role: {} and permissions: {}", username, role, permissions);
+            log.debug("Authenticated user: {} with role: {}", username, roles);
 
-            UserPrincipal principal = new UserPrincipal(userId, username, role, permissions);
+            List<SimpleGrantedAuthority> authorities = roles.stream()
+                    .map(role -> new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()))
+                    .toList();
 
-            // Create authorities from role and permissions
-            Collection<SimpleGrantedAuthority> authorities = permissions.stream()
-                    .map(permission -> new SimpleGrantedAuthority("PERMISSION_" + permission))
-                    .collect(Collectors.toList());
+            UserPrincipal principal = new UserPrincipal(userId, username, authorities);
 
-            authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
 
             return new JwtAuthenticationToken(principal, token, authorities);
         });

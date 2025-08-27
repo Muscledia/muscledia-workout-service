@@ -19,7 +19,6 @@ public class RoutineFolder {
     private String id;
 
     @Field("hevy_id")
-    @Indexed(unique = true)
     private Long hevyId;
 
     @Field("folder_index")
