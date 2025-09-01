@@ -5,10 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.springframework.data.mongodb.core.mapping.Field;
 
 import java.math.BigDecimal;
@@ -47,6 +44,15 @@ public class WorkoutExercise {
     @Schema(description = "Category of the exercise", example = "STRENGTH", allowableValues = {"STRENGTH", "CARDIO", "FLEXIBILITY", "PLYOMETRIC"})
     private String exerciseCategory;
 
+    /**
+     * -- GETTER --
+     *  Get the primary muscle group for this exercise
+     *  This would typically come from your Exercise reference data
+     */ // Option 1: If you store this directly on WorkoutExercise
+    // Option 2: If you need to look it up from Exercise service
+    // This would require dependency injection, so better to do in a service
+    // return exerciseService.findById(this.exerciseId).getPrimaryMuscleGroup();
+    @Getter
     @Field("primary_muscle_group")
     @JsonProperty("primaryMuscleGroup")
     @Schema(description = "Primary muscle group targeted", example = "chest")
@@ -234,10 +240,31 @@ public class WorkoutExercise {
      * Check if all planned sets were completed successfully
      */
     public boolean isFullyCompleted() {
-        return sets != null && !sets.isEmpty() &&
-                sets.stream().allMatch(set -> Boolean.TRUE.equals(set.getCompleted()));
+        if (sets == null || sets.isEmpty()) {
+            return false;
+        }
+
+        return sets.stream()
+                .allMatch(set -> Boolean.TRUE.equals(set.getCompleted()));
     }
 
+    /**
+     * Get secondary muscle groups for this exercise
+     */
+    public List<String> getSecondaryMuscleGroups() {
+        // Option 1: If you store this directly on WorkoutExercise
+        return this.secondaryMuscleGroups != null ? this.secondaryMuscleGroups : List.of();
+
+        // Option 2: If you need to look it up from Exercise service
+        // return exerciseService.findById(this.exerciseId).getSecondaryMuscleGroups();
+    }
+
+    /**
+     * Check if this exercise has been started (has at least one completed set)
+     */
+    public boolean isStarted() {
+        return getCompletedSetsCount() > 0;
+    }
 
     /**
      * Get the number of sets performed
