@@ -4,6 +4,7 @@ import com.muscledia.workout_service.dto.response.analytics.ProgressTrackingResp
 import com.muscledia.workout_service.dto.response.analytics.WorkoutAnalyticsResponse;
 import com.muscledia.workout_service.model.analytics.PersonalRecord;
 import com.muscledia.workout_service.service.AuthenticationService;
+import com.muscledia.workout_service.service.analytics.PersonalRecordMigrationService;
 import com.muscledia.workout_service.service.analytics.PersonalRecordService;
 import com.muscledia.workout_service.service.analytics.ProgressTrackingService;
 import com.muscledia.workout_service.service.analytics.WorkoutAnalyticsService;
@@ -35,6 +36,7 @@ public class WorkoutAnalyticsController {
         private final PersonalRecordService personalRecordService;
         private final ProgressTrackingService progressTrackingService;
         private final AuthenticationService authenticationService;
+        private final PersonalRecordMigrationService migrationService;
 
         @GetMapping("/dashboard")
         @Operation(summary = "Get dashboard analytics", description = "Retrieve comprehensive analytics for dashboard view including weekly, monthly, and quarterly insights.", security = @SecurityRequirement(name = "bearer-key"))
@@ -90,6 +92,33 @@ public class WorkoutAnalyticsController {
                                                 period.toUpperCase(), periods))
                                 .doOnComplete(() -> log.info("Retrieved {} periods of {} historical analytics", periods,
                                                 period));
+        }
+
+
+        @PostMapping("/fix-exercise-names")
+        @Operation(summary = "Fix exercise names in personal records",
+                description = "Updates your personal records with proper exercise names instead of 'Exercise [ID]'",
+                security = @SecurityRequirement(name = "bearer-key"))
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "200", description = "Migration completed successfully"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "500", description = "Migration failed")
+        })
+        public Mono<ResponseEntity<String>> fixExerciseNames() {
+                log.info("Starting exercise name migration for personal records");
+
+                return authenticationService.getCurrentUserId()
+                        .flatMap(migrationService::fixExerciseNamesForUser)
+                        .map(count -> {
+                                String message = String.format("Migration completed successfully. Updated %d of your personal records with proper exercise names.", count);
+                                log.info(message);
+                                return ResponseEntity.ok(message);
+                        })
+                        .onErrorResume(error -> {
+                                String errorMessage = "Migration failed: " + error.getMessage();
+                                log.error(errorMessage, error);
+                                return Mono.just(ResponseEntity.status(500).body(errorMessage));
+                        });
         }
 
         @GetMapping("/personal-records")

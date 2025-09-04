@@ -132,8 +132,12 @@ public class WorkoutSet {
      * Mark set as completed
      */
     public void markCompleted() {
-        this.completedAt = LocalDateTime.now();
         this.completed = true;
+        this.completedAt = LocalDateTime.now();
+
+        if (this.startedAt == null) {
+            this.startedAt = LocalDateTime.now();
+        }
     }
 
     /**

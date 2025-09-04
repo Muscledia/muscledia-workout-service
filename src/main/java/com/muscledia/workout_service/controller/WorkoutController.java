@@ -1,5 +1,7 @@
 package com.muscledia.workout_service.controller;
 
+import com.muscledia.workout_service.domain.service.WorkoutCalculationService;
+import com.muscledia.workout_service.domain.vo.WorkoutMetrics;
 import com.muscledia.workout_service.dto.request.CompleteWorkoutRequest;
 import com.muscledia.workout_service.dto.request.StartWorkoutFromPlanRequest;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
@@ -41,6 +43,7 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -63,6 +66,8 @@ public class WorkoutController {
     private final EventOutboxService eventOutboxService;
     private final EventOutboxPublisherScheduler scheduler;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    private final WorkoutCalculationService workoutCalculationService;
 
     // ==================== WORKOUT SESSION LIFECYCLE ====================
 
@@ -480,22 +485,13 @@ public class WorkoutController {
 
         return authenticationService.getCurrentUserId()
                 .flatMap(userId -> {
-                    log.info("Authenticated user: {} completing workout: {}", userId, workoutId);
-
                     Map<String, Object> completionData = convertCompletionRequest(completionRequest);
+                    // WorkoutService handles whether to use orchestrator or legacy
                     return workoutService.completeWorkout(workoutId, userId, completionData);
                 })
                 .map(this::convertToResponse)
                 .map(ResponseEntity::ok)
-                .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
-                .doOnSuccess(response -> log.info("Successfully completed workout: {}", workoutId))
-                .doOnError(error -> {
-                    if (error instanceof InvalidWorkoutStateException) {
-                        log.warn("USER STORY VALIDATION FAILED: {}", error.getMessage());
-                    } else {
-                        log.error("Failed to complete workout {}: {}", workoutId, error.getMessage());
-                    }
-                });
+                .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()));
     }
 
     @PutMapping("/{workoutId}/cancel")
@@ -549,9 +545,14 @@ public class WorkoutController {
     // ==================== HELPER METHODS - FIXED ====================
 
     /**
-     * FIXED: Convert Workout entity to WorkoutResponse DTO with null safety and method fixes
+     * FIXED: Convert Workout entity to WorkoutResponse DTO using calculation service
      */
     private WorkoutResponse convertToResponse(Workout workout) {
+        // Use calculation service for metrics instead of model methods
+        WorkoutMetrics metrics = workoutCalculationService.calculateWorkoutMetrics(workout);
+        List<String> muscleGroups = workoutCalculationService.getWorkedMuscleGroups(workout);
+        Integer calories = workoutCalculationService.estimateCaloriesBurned(workout);
+
         return WorkoutResponse.builder()
                 .id(workout.getId())
                 .userId(workout.getUserId())
@@ -564,11 +565,11 @@ public class WorkoutController {
                 .durationMinutes(workout.getDurationMinutes())
                 .exercises(convertExercisesToResponse(workout.getExercises()))
                 .metrics(WorkoutResponse.WorkoutMetrics.builder()
-                        .totalVolume(workout.getTotalVolume())
-                        .totalSets(workout.getTotalSets())
-                        .totalReps(workout.getTotalReps())
-                        .caloriesBurned(workout.getCaloriesBurned())
-                        .workedMuscleGroups(workout.getWorkedMuscleGroups())
+                        .totalVolume(metrics.getTotalVolume().getValue())
+                        .totalSets(metrics.getTotalSets())
+                        .totalReps(metrics.getTotalReps())
+                        .caloriesBurned(calories)
+                        .workedMuscleGroups(muscleGroups)
                         .build())
                 .context(WorkoutResponse.WorkoutContext.builder()
                         .location(workout.getLocation())
@@ -589,9 +590,16 @@ public class WorkoutController {
     }
 
     /**
-     * FIXED: Removed calls to non-existent methods
+     * FIXED: Calculate metrics using helper methods instead of non-existent model methods
      */
     private WorkoutExerciseResponse convertExerciseToResponse(WorkoutExercise exercise) {
+        // Calculate metrics safely
+        BigDecimal totalVolume = calculateExerciseTotalVolume(exercise);
+        Integer totalReps = calculateExerciseTotalReps(exercise);
+        BigDecimal maxWeight = calculateExerciseMaxWeight(exercise);
+        Double averageRpe = calculateExerciseAverageRpe(exercise);
+        Long completedSets = calculateCompletedSetsCount(exercise);
+
         return WorkoutExerciseResponse.builder()
                 .exerciseId(exercise.getExerciseId())
                 .exerciseName(exercise.getExerciseName())
@@ -605,11 +613,11 @@ public class WorkoutController {
                 .notes(exercise.getNotes())
                 .startedAt(exercise.getStartedAt() != null ? exercise.getStartedAt().toString() : null)
                 .completedAt(exercise.getCompletedAt() != null ? exercise.getCompletedAt().toString() : null)
-                .totalVolume(exercise.getTotalVolume())
-                .totalReps(exercise.getTotalReps())
-                .maxWeight(exercise.getMaxWeight())
-                .averageRpe(exercise.getAverageRpe())
-                .completedSets(exercise.getCompletedSetsCount()) // This should work if method exists
+                .totalVolume(totalVolume)
+                .totalReps(totalReps)
+                .maxWeight(maxWeight)
+                .averageRpe(averageRpe)
+                .completedSets(completedSets.intValue())
                 .build();
     }
 
@@ -623,9 +631,11 @@ public class WorkoutController {
     }
 
     /**
-     * FIXED: Removed call to non-existent setVolume method
+     * FIXED: Calculate volume instead of calling non-existent getVolume method
      */
     private WorkoutSetResponse convertSetToResponse(WorkoutSet set) {
+        BigDecimal volume = calculateSetVolume(set);
+
         return WorkoutSetResponse.builder()
                 .setNumber(set.getSetNumber())
                 .weightKg(set.getWeightKg())
@@ -642,9 +652,76 @@ public class WorkoutController {
                 .notes(set.getNotes())
                 .startedAt(set.getStartedAt() != null ? set.getStartedAt().toString() : null)
                 .completedAt(set.getCompletedAt() != null ? set.getCompletedAt().toString() : null)
-                .volume(set.getVolume()) // This should work if getVolume() exists
+                .volume(volume)
                 .build();
     }
+
+    // ==================== CALCULATION HELPER METHODS ====================
+
+    private BigDecimal calculateExerciseTotalVolume(WorkoutExercise exercise) {
+        if (exercise.getSets() == null) {
+            return BigDecimal.ZERO;
+        }
+
+        return exercise.getSets().stream()
+                .map(this::calculateSetVolume)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private Integer calculateExerciseTotalReps(WorkoutExercise exercise) {
+        if (exercise.getSets() == null) {
+            return 0;
+        }
+
+        return exercise.getSets().stream()
+                .filter(set -> set.getReps() != null)
+                .mapToInt(WorkoutSet::getReps)
+                .sum();
+    }
+
+    private BigDecimal calculateExerciseMaxWeight(WorkoutExercise exercise) {
+        if (exercise.getSets() == null) {
+            return BigDecimal.ZERO;
+        }
+
+        return exercise.getSets().stream()
+                .map(WorkoutSet::getWeightKg)
+                .filter(weight -> weight != null)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+    }
+
+    private Double calculateExerciseAverageRpe(WorkoutExercise exercise) {
+        if (exercise.getSets() == null) {
+            return null;
+        }
+
+        return exercise.getSets().stream()
+                .filter(set -> set.getRpe() != null)
+                .mapToInt(WorkoutSet::getRpe)
+                .average()
+                .orElse(0.0);
+    }
+
+    private Long calculateCompletedSetsCount(WorkoutExercise exercise) {
+        if (exercise.getSets() == null) {
+            return 0L;
+        }
+
+        return exercise.getSets().stream()
+                .filter(set -> Boolean.TRUE.equals(set.getCompleted()))
+                .count();
+    }
+
+    private BigDecimal calculateSetVolume(WorkoutSet set) {
+        if (set.getWeightKg() == null || set.getReps() == null) {
+            return BigDecimal.ZERO;
+        }
+
+        return set.getWeightKg().multiply(BigDecimal.valueOf(set.getReps()));
+    }
+
+    // ==================== OTHER HELPER METHODS ====================
 
     private WorkoutExercise convertToWorkoutExercise(AddExerciseRequest request) {
         return WorkoutExercise.builder()
@@ -718,6 +795,8 @@ public class WorkoutController {
         return List.of("barbell", "dumbbells", "bench");
     }
 
+    // ==================== DEBUG ENDPOINTS ====================
+
     @GetMapping("/debug/outbox-status")
     public Mono<Map<String, Object>> getOutboxStatus() {
         return Mono.zip(
@@ -780,8 +859,6 @@ public class WorkoutController {
                 });
     }
 
-    // 🔧 FIXED KAFKA TEST ENDPOINT - Reactive Types Issue
-
     @PostMapping("/debug/test-kafka-direct")
     public Mono<Map<String, Object>> testKafkaDirect() {
         log.info("🧪 TESTING DIRECT KAFKA SEND");
@@ -793,7 +870,6 @@ public class WorkoutController {
         testEvent.put("timestamp", Instant.now().toString());
         testEvent.put("testMessage", "Direct Kafka test from debug endpoint");
 
-        // 🔧 FIX: Use Mono.fromFuture() with proper CompletableFuture conversion
         return Mono.fromFuture(
                         kafkaTemplate.send("workout-events", "999", testEvent)
                                 .toCompletableFuture()  // Convert ListenableFuture to CompletableFuture
@@ -833,7 +909,6 @@ public class WorkoutController {
         return info;
     }
 
-    // 3. DEBUGGING ENDPOINTS - Add to WorkoutController for testing
     @GetMapping("/debug/test-workout-completed-event")
     public ResponseEntity<Map<String, Object>> testWorkoutCompletedEvent() {
         Map<String, Object> result = new HashMap<>();
