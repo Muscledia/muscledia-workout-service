@@ -123,3 +123,10 @@ security:
     - /webjars/**
   admin-endpoints:
     - /api/admin/**
+
+workout:
+  features:
+    enhanced-validation: true
+    advanced-metrics: true
+  use-orchestrator: true  # Start with false, gradually enable
+  use-new-calculation: true  # Your existing flag
