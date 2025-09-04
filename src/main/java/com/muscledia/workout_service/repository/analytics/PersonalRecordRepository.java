@@ -9,6 +9,7 @@ import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 @Repository
 public interface PersonalRecordRepository extends ReactiveMongoRepository<PersonalRecord, String> {
@@ -163,4 +164,6 @@ public interface PersonalRecordRepository extends ReactiveMongoRepository<Person
      */
     @Query("{ 'userId': { $in: ?0 } }")
     Flux<PersonalRecord> findByUserIdIn(java.util.List<Long> userIds);
+
+    Flux<PersonalRecord> findByUserId(Long userId);
 }
