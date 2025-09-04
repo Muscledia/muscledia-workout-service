@@ -23,6 +23,10 @@ public class Volume {
         this.value = value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    public static Volume create(BigDecimal value) {
+        return new Volume(value != null ? value : BigDecimal.ZERO);
+    }
+
     public static Volume of(BigDecimal weight, int reps) {
         if (weight == null || reps < 0) {
             return zero();
