@@ -7,10 +7,7 @@ import com.muscledia.workout_service.model.enums.WorkoutStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -87,6 +84,23 @@ public class Workout {
     @Max(value = 600, message = "Duration cannot exceed 600 minutes")
     @JsonProperty("durationMinutes")
     private Integer durationMinutes;
+
+    @Field("calories_burned")
+    @Min(value = 0, message = "Calories burned cannot be negative")
+    @Max(value = 5000, message = "Calories burned cannot exceed 5000")
+    @JsonProperty("caloriesBurned")
+    private Integer caloriesBurned;
+
+    /**
+     * -- SETTER --
+     *  Set total volume
+     */
+    @Setter
+    @Field("total_volume")
+    @Min(value = 0, message = "Total volume cannot be negative")
+    @JsonProperty("totalVolume")
+    @Schema(description = "Total volume (weight × reps) for the entire workout")
+    private BigDecimal totalVolume;
 
     // === EXERCISES (CORE DATA) ===
     @NotEmpty(message = "At least one exercise is required for a completed workout")
@@ -175,6 +189,55 @@ public class Workout {
 
     public boolean isCompleted() {
         return status == WorkoutStatus.COMPLETED;
+    }
+
+    /**
+     * Get total volume - calculated from exercises or stored value
+     */
+    public BigDecimal getTotalVolume() {
+        if (totalVolume != null) {
+            return totalVolume;
+        }
+
+        // Calculate on-the-fly if not stored
+        return calculateTotalVolumeFromExercises();
+    }
+
+    /**
+     * Calculate total volume from all exercises
+     */
+    private BigDecimal calculateTotalVolumeFromExercises() {
+        if (exercises == null || exercises.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        return exercises.stream()
+                .map(WorkoutExercise::getTotalVolume)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /**
+     * Get total sets across all exercises
+     */
+    public int getTotalSets() {
+        if (exercises == null) {
+            return 0;
+        }
+        return exercises.stream()
+                .mapToInt(WorkoutExercise::getTotalSets)
+                .sum();
+    }
+
+    /**
+     * Get total reps across all exercises
+     */
+    public int getTotalReps() {
+        if (exercises == null) {
+            return 0;
+        }
+        return exercises.stream()
+                .mapToInt(WorkoutExercise::getTotalReps)
+                .sum();
     }
 
     public boolean isPlanned() {

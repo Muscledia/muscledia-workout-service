@@ -130,28 +130,35 @@ public class WorkoutExercise {
      * Calculate total volume for this exercise (sum of all sets)
      */
     public BigDecimal getTotalVolume() {
-        if (sets == null || sets.isEmpty()) {
+        if (this.sets == null || this.sets.isEmpty()) {
             return BigDecimal.ZERO;
         }
 
-        return sets.stream()
-                .map(WorkoutSet::getVolume)
-                .filter(Objects::nonNull)
+        return this.sets.stream()
+                .filter(set -> set.getWeightKg() != null && set.getReps() != null)
+                .map(set -> set.getWeightKg().multiply(BigDecimal.valueOf(set.getReps())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /**
      * Calculate total reps for this exercise
      */
-    public int getTotalReps() {
-        if (sets == null || sets.isEmpty()) {
+    public Integer getTotalReps() {
+        if (this.sets == null) {
             return 0;
         }
 
-        return sets.stream()
+        return this.sets.stream()
                 .filter(set -> set.getReps() != null)
                 .mapToInt(WorkoutSet::getReps)
                 .sum();
+    }
+
+    /**
+     * Get total number of sets
+     */
+    public int getTotalSets() {
+        return sets != null ? sets.size() : 0;
     }
 
     /**
@@ -246,6 +253,21 @@ public class WorkoutExercise {
 
         return sets.stream()
                 .allMatch(set -> Boolean.TRUE.equals(set.getCompleted()));
+    }
+
+    /**
+     * Get completion percentage for this exercise
+     */
+    public double getCompletionPercentage() {
+        if (sets == null || sets.isEmpty()) {
+            return 0.0;
+        }
+
+        long completedSets = sets.stream()
+                .filter(set -> Boolean.TRUE.equals(set.getCompleted()))
+                .count();
+
+        return (double) completedSets / sets.size() * 100.0;
     }
 
     /**
