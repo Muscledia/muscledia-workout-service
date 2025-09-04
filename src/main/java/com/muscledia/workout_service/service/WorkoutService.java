@@ -1,11 +1,11 @@
 package com.muscledia.workout_service.service;
 
 import com.muscledia.workout_service.domain.service.WorkoutCalculationService;
+import com.muscledia.workout_service.domain.service.WorkoutOrchestrator;
 import com.muscledia.workout_service.domain.service.WorkoutValidationService;
 import com.muscledia.workout_service.domain.vo.WorkoutMetrics;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
 import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
-import com.muscledia.workout_service.event.ExerciseCompletedEvent;
 import com.muscledia.workout_service.event.WorkoutCompletedEvent;
 import com.muscledia.workout_service.event.publisher.TransactionalEventPublisher;
 import com.muscledia.workout_service.exception.ExerciseNotFoundException;
@@ -45,6 +45,7 @@ public class WorkoutService {
     private final WorkoutPlanService workoutPlanService;
 
     // NEW: Domain Services for business logic
+    private final WorkoutOrchestrator workoutOrchestrator;
     private final WorkoutCalculationService workoutCalculationService;
     private final WorkoutValidationService workoutValidationService;
     private final FeatureToggleService featureToggleService;
@@ -52,6 +53,9 @@ public class WorkoutService {
     // Feature flags for migration
     @Value("${workout.use-new-calculation:true}")
     private boolean useNewCalculation;
+
+    @Value("${workout.use-orchestrator:false}")
+    private boolean useOrchestrator;
 
     // WORKOUT SESSION MANAGEMENT
 
@@ -392,11 +396,21 @@ public class WorkoutService {
 
 
     // WORKOUT COMPLETION
-
     /**
      * REFACTORED: Complete workout using domain services
      */
+
     public Mono<Workout> completeWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
+        if (useOrchestrator) {
+            // NEW: Use DDD orchestrator
+            return workoutOrchestrator.completeWorkout(workoutId, userId, completionData);
+        } else {
+            // OLD: Use existing implementation (keep as fallback)
+            return completeWorkoutLegacy(workoutId, userId, completionData);
+        }
+    }
+
+    public Mono<Workout> completeWorkoutLegacy(String workoutId, Long userId, Map<String, Object> completionData) {
         log.info("Completing workout session: {} for user: {}", workoutId, userId);
 
         return transactionalOperator.execute(status ->
