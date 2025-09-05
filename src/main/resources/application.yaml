@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: workout-service
+    name: muscledia-workout-service
   jackson:
     # Add these Jackson configurations
     serialization:
@@ -53,7 +53,7 @@ management:
         include: ${ACTUATOR_ENDPOINTS:health,info}
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: always
 
 # Logging
 logging:
@@ -108,7 +108,6 @@ jwt:
 # User Service Configuration (for JWT validation)
 user-service:
   url: ${USER_SERVICE_URL:http://localhost:8081}
-  validate-token-endpoint: ${USER_SERVICE_VALIDATE_ENDPOINT:/api/v1/auth/validate}
 
 # Security Configuration
 security:
