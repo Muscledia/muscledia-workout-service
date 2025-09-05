@@ -1,0 +1,93 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: muscledia-workout-service
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      write-date-timestamps-as-nanoseconds: false
+    deserialization:
+      read-date-timestamps-as-nanoseconds: false
+      adjust-dates-to-context-time-zone: false
+
+  data:
+    mongodb:
+      uri: ${MONGODB_URI}
+      database: ${MONGO_WORKOUT_DATABASE:muscledia_workouts}
+      auto-index-creation: true
+
+  # Kafka Configuration for Event Publishing & Consuming
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      batch-size: 16384
+      linger-ms: 5
+      properties:
+        enable.idempotence: true
+        # Enable transactions for outbox pattern
+        transactional.id: workout-service-producer
+    consumer:
+      group-id: ${KAFKA_GROUP_ID_WORKOUT:workout-service-group}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.json.trusted.packages: "com.muscledia.*"
+        spring.json.use.type.headers: false
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://service-discovery:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    hostname: workout-service
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: ${JWT_EXPIRATION}
+  issuer: ${JWT_ISSUER}
+
+user-service:
+  url: http://user-service:8081
+
+
+# External APIs
+api:
+  exercise:
+    url: ${EXERCISE_API_URL:https://www.exercisedb.dev/api/v1}
+  hevy:
+    base-url: https://api.hevyapp.com
+    version: v1
+    api-key: ${HEVY_API_KEY}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+logging:
+  level:
+    com.muscledia: INFO
+    org.springframework.data.mongodb: INFO
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
