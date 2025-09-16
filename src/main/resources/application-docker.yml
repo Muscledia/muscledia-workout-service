@@ -15,13 +15,13 @@ spring:
 
   data:
     mongodb:
-      uri: ${MONGODB_URI}
+      uri: mongodb://admin:secure_mongo_password_123@mongodb:27017/muscledia_workouts?authSource=admin
       database: ${MONGO_WORKOUT_DATABASE:muscledia_workouts}
       auto-index-creation: true
 
   # Kafka Configuration for Event Publishing & Consuming
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
@@ -51,9 +51,9 @@ eureka:
     hostname: workout-service
 
 jwt:
-  secret: ${JWT_SECRET}
-  expiration: ${JWT_EXPIRATION}
-  issuer: ${JWT_ISSUER}
+  secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
+  expiration: ${JWT_EXPIRATION:86400000}
+  issuer: ${JWT_ISSUER:muscledia-user-service}
 
 user-service:
   url: http://user-service:8081
@@ -62,11 +62,12 @@ user-service:
 # External APIs
 api:
   exercise:
-    url: ${EXERCISE_API_URL:https://www.exercisedb.dev/api/v1}
+    url: https://www.exercisedb.dev/api/v1
   hevy:
     base-url: https://api.hevyapp.com
     version: v1
-    api-key: ${HEVY_API_KEY}
+    api-key: f2c9f484-9481-442c-bab9-905d2bd338a3
+
 
 management:
   endpoints:
