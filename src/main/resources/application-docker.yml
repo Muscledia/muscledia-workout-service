@@ -1,0 +1,94 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: muscledia-workout-service
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+      write-date-timestamps-as-nanoseconds: false
+    deserialization:
+      read-date-timestamps-as-nanoseconds: false
+      adjust-dates-to-context-time-zone: false
+
+  data:
+    mongodb:
+      uri: mongodb://admin:secure_mongo_password_123@mongodb:27017/muscledia_workouts?authSource=admin
+      database: ${MONGO_WORKOUT_DATABASE:muscledia_workouts}
+      auto-index-creation: true
+
+  # Kafka Configuration for Event Publishing & Consuming
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      batch-size: 16384
+      linger-ms: 5
+      properties:
+        enable.idempotence: true
+        # Enable transactions for outbox pattern
+        transactional.id: workout-service-producer
+    consumer:
+      group-id: ${KAFKA_GROUP_ID_WORKOUT:workout-service-group}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.json.trusted.packages: "com.muscledia.*"
+        spring.json.use.type.headers: false
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://service-discovery:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    hostname: workout-service
+
+jwt:
+  secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
+  expiration: ${JWT_EXPIRATION:86400000}
+  issuer: ${JWT_ISSUER:muscledia-user-service}
+
+user-service:
+  url: http://user-service:8081
+
+
+# External APIs
+api:
+  exercise:
+    url: https://www.exercisedb.dev/api/v1
+  hevy:
+    base-url: https://api.hevyapp.com
+    version: v1
+    api-key: f2c9f484-9481-442c-bab9-905d2bd338a3
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+logging:
+  level:
+    com.muscledia: INFO
+    org.springframework.data.mongodb: INFO
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
