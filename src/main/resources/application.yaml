@@ -1,0 +1,131 @@
+server:
+  port: 8082 # As defined in your Service Matrix
+
+spring:
+  application:
+    name: muscledia-workout-service
+  jackson:
+    # Add these Jackson configurations
+    serialization:
+      write-dates-as-timestamps: false
+      write-date-timestamps-as-nanoseconds: false
+    deserialization:
+      read-date-timestamps-as-nanoseconds: false
+      adjust-dates-to-context-time-zone: false
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb+srv://mongo:NSX2O96ElPhiLPMk@cluster0.dcypj6u.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&connectTimeoutMS=20000&socketTimeoutMS=20000&maxIdleTimeMS=120000&maxLifeTimeMS=120000}
+      database: ${MONGODB_DATABASE:muscledia_workouts} # Dedicated database for workout service
+      auto-index-creation: true
+
+    # Kafka Producer Configuration
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092} # Connects to the same Kafka broker
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # Producer configuration for reliability and performance:
+      acks: all # Guarantees message delivery
+      retries: 3 # Number of retries for failed sends
+      batch-size: 16384 # Default batch size (16KB)
+      linger.ms: 5 # Time to wait before sending a batch
+      # Idempotent producer for exactly-once delivery (important for robustness)
+      # transaction-id-prefix is needed if you implement the outbox pattern in this service
+      #transaction-id-prefix: ${KAFKA_PRODUCER_TX_PREFIX:workout-service-tx-}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:workout-service-consumer} # Unique consumer group ID
+      auto-offset-reset: earliest # Or 'latest', depending on your desired behavior
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer # Good for robust deserialization
+      properties:
+        spring.json.trusted.packages: "com.muscledia.workout_service.event.*, com.muscledia.Gamification_service.event.*, com.muscledia.user_service.event.*" # IMPORTANT: Add packages of event DTOs this service consumes
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka # Point to Eureka Server
+
+# Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: ${ACTUATOR_ENDPOINTS:health,info}
+  endpoint:
+    health:
+      show-details: always
+
+# Logging
+logging:
+  level:
+    com.muscledia.workout_service: ${LOG_LEVEL:INFO} # Adjust package name
+    org.springframework: WARN
+    org.springframework.data.mongodb: DEBUG
+    com.mongodb: DEBUG
+    kafka: ${KAFKA_LOG_LEVEL:OFF}
+
+# SpringDoc OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operations-sorter: method
+    tags-sorter: alpha
+    try-it-out-enabled: true
+    disable-swagger-default-url: true
+    config-url: /api-docs/swagger-config
+    url: /api-docs
+  show-actuator: false
+  group-configs:
+    - group: "public-api"
+      display-name: "Public API"
+      paths-to-match: "/api/v1/**"
+    - group: "admin-api"
+      display-name: "Admin API"
+      paths-to-match: "/api/admin/**"
+
+api:
+  exercise:
+    url: ${EXERCISE_API_URL:https://www.exercisedb.dev/api/v1}
+  hevy:
+    base-url: https://api.hevyapp.com
+    version: v1
+    api-key: ${HEVY_API_KEY:f2c9f484-9481-442c-bab9-905d2bd338a3}
+    routines-page-size: 10
+    routine-folders-page-size: 10
+    max-routines-pages: 10
+    max-routine-folders-pages: 3
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
+  expiration: ${JWT_EXPIRATION:86400000} # 24 hours in milliseconds
+  issuer: ${JWT_ISSUER:muscledia-user-service}
+
+# User Service Configuration (for JWT validation)
+user-service:
+  url: ${USER_SERVICE_URL:http://localhost:8081}
+
+# Security Configuration
+security:
+  public-endpoints:
+    - /api/v1/exercises/**
+    - /api/v1/muscle-groups/**
+    - /api/v1/auth/test
+    - /api-docs/**
+    - /swagger-ui/**
+    - /swagger-ui.html
+    - /actuator/health
+    - /webjars/**
+  admin-endpoints:
+    - /api/admin/**
+
+workout:
+  features:
+    enhanced-validation: true
+    advanced-metrics: true
+  use-orchestrator: true  # Start with false, gradually enable
+  use-new-calculation: true  # Your existing flag

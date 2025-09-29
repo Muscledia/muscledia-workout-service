@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"hevy_id":{"$numberInt":"1"}},"name":"hevy_id","unique":true},{"v":{"$numberInt":"2"},"key":{"title":{"$numberInt":"1"}},"name":"title"}],"uuid":"6249a5294fc844ca8f3a2b7e53e2bb81","collectionName":"routine_folders","type":"collection"}

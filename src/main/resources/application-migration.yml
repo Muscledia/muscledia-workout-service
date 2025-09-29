@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: muscledia-workout-service-migration
+
+  # Disable unnecessary features during migration
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+      - org.springframework.cloud.netflix.eureka.EurekaClientAutoConfiguration
+
+# Disable Eureka client
+eureka:
+  client:
+    enabled: false
+
+# Disable Kafka
+spring.kafka:
+  enabled: false
+
+# Logging
+logging:
+  level:
+    com.muscledia.workout_service.migration: DEBUG
+    org.mongodb.driver: INFO
+    org.springframework: WARN
