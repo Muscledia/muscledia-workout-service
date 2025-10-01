@@ -65,14 +65,6 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-mongodb-reactive</artifactId>
 		</dependency>
-
-		<!-- Add sync driver for migration ONLY -->
-		<dependency>
-			<groupId>org.mongodb</groupId>
-			<artifactId>mongodb-driver-sync</artifactId>
-			<version>4.11.1</version>
-			<scope>compile</scope>
-		</dependency>
 		
 		<!-- Spring Security for WebFlux -->
 		<dependency>
