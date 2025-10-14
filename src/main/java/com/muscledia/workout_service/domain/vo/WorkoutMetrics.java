@@ -52,25 +52,32 @@ public class WorkoutMetrics {
 
         for (WorkoutExercise exercise : exercises) {
             if (exercise.getSets() != null) {
-                totalSets += exercise.getSets().size();
-
                 Volume exerciseVolume = Volume.zero();
                 int exerciseReps = 0;
+                int exerciseCompletedSets = 0;  // Track completed sets per exercise
                 boolean hasCompletedSet = false;
 
                 for (var set : exercise.getSets()) {
-                    if (set.getWeightKg() != null && set.getReps() != null) {
-                        Volume setVolume = Volume.create(set.getWeightKg().multiply(
-                                java.math.BigDecimal.valueOf(set.getReps())));
-                        exerciseVolume = exerciseVolume.add(setVolume);
-                        exerciseReps += set.getReps();
-                    }
-
+                    // KEY FIX: Only process completed sets
                     if (Boolean.TRUE.equals(set.getCompleted())) {
+                        exerciseCompletedSets++;  // Count this completed set
                         hasCompletedSet = true;
+
+                        // Calculate volume and reps only for completed sets
+                        if (set.getWeightKg() != null && set.getReps() != null) {
+                            Volume setVolume = Volume.create(set.getWeightKg().multiply(
+                                    java.math.BigDecimal.valueOf(set.getReps())));
+                            exerciseVolume = exerciseVolume.add(setVolume);
+                            exerciseReps += set.getReps();
+                        } else if (set.getReps() != null) {
+                            // Count reps even without weight (bodyweight exercises)
+                            exerciseReps += set.getReps();
+                        }
                     }
                 }
 
+                // Add only completed sets to total
+                totalSets += exerciseCompletedSets;
                 totalVolume = totalVolume.add(exerciseVolume);
                 totalReps += exerciseReps;
 
