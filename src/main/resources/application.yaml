@@ -59,6 +59,10 @@ management:
 logging:
   level:
     com.muscledia.workout_service: ${LOG_LEVEL:INFO} # Adjust package name
+    # ADDED: Specific logging for PR events
+    com.muscledia.workout_service.service.analytics.PersonalRecordService: INFO
+    com.muscledia.workout_service.event.publisher.TransactionalEventPublisher: INFO
+    com.muscledia.workout_service.event.scheduler.EventOutboxPublisherScheduler: DEBUG
     org.springframework: WARN
     org.springframework.data.mongodb: DEBUG
     com.mongodb: DEBUG
@@ -129,3 +133,9 @@ workout:
     advanced-metrics: true
   use-orchestrator: true  # Start with false, gradually enable
   use-new-calculation: true  # Your existing flag
+
+# Kafka Topic Configuration for PR Events
+kafka:
+  topics:
+    workout-events: workout-events
+    personal-record-events: personal-record-events  # New topic for PR events

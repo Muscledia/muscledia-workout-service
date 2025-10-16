@@ -130,10 +130,11 @@ public class EventOutboxPublisherScheduler {
                 .subscribe();
     }
 
-    // ✅ FIXED: Add all missing event types that appear in your logs
+    // UPDATED: Add PersonalRecordEvent to event class mapping
     private String getEventClassPath(String eventType) throws ClassNotFoundException {
         String className = switch (eventType) {
             case "WORKOUT_COMPLETED" -> "com.muscledia.workout_service.event.WorkoutCompletedEvent";
+            case "PERSONAL_RECORD" -> "com.muscledia.workout_service.event.PersonalRecordEvent"; // ADDED
             default -> throw new ClassNotFoundException("Unknown event type for class mapping: " + eventType);
         };
         log.debug("📋 EVENT TYPE '{}' mapped to class: {}", eventType, className);

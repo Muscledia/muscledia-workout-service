@@ -83,15 +83,16 @@ public class KafkaConfig {
     }
 
     /**
-     * Define type mappings for JSON serialization.
-     * The keys ('workout', 'exercise') MUST precisely match the `__TypeId__` values
+     * UPDATED: Define type mappings for JSON serialization including PersonalRecordEvent.
+     * The keys ('workout', 'pr') MUST precisely match the `__TypeId__` values
      * expected by the consuming service (`Gamification_service`) as defined in its
      * KafkaConfig's `getTypeMapping()` method.
      */
     private String getTypeMapping() {
-        // Only include types that THIS service will publish.
-        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent";
-                //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
+        // Include all types that THIS service will publish.
+        return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent," +
+                "pr:com.muscledia.workout_service.event.PersonalRecordEvent";
+        //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
 
 
