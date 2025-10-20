@@ -73,9 +73,11 @@ public class WorkoutMetricsCalculator {
             return 0;
         }
 
-        return workoutData.getExercises().stream()
-                .mapToInt(exercise -> exercise.getSets() != null ? exercise.getSets().size() : 0)
-                .sum();
+        return (int) workoutData.getExercises().stream()
+                .flatMap(exercise -> exercise.getSets() != null ?
+                        exercise.getSets().stream() : java.util.stream.Stream.empty())
+                .filter(SetData::isCompleted)
+                .count();
     }
 
     /**
