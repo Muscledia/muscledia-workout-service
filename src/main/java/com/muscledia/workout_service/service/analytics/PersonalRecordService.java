@@ -326,7 +326,7 @@ public class PersonalRecordService {
         // Create update with the new values
         Update update = new Update()
                 .set("value", value)
-                .set("weightKg", set.getWeightKg())
+                .set("weight_kg", set.getWeightKg())
                 .set("reps", set.getReps())
                 .set("sets", 1)
                 .set("achievedDate", LocalDateTime.now())
