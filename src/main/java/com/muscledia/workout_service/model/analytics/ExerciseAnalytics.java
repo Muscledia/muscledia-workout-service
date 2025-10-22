@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.model.analytics;
 
+import lombok.Builder;
 import lombok.Data;
 import org.springframework.data.mongodb.core.mapping.Field;
 
@@ -7,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
+@Builder
 public class ExerciseAnalytics {
 
     @Field("exercise_id")
