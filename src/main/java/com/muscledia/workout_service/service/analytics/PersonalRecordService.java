@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.service.analytics;
 
+import com.muscledia.workout_service.dto.response.analytics.PRStatistics;
 import com.muscledia.workout_service.event.PersonalRecordEvent;
 import com.muscledia.workout_service.event.publisher.TransactionalEventPublisher;
 import com.muscledia.workout_service.model.Workout;
@@ -7,30 +8,24 @@ import com.muscledia.workout_service.model.analytics.PersonalRecord;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutSet;
 import com.muscledia.workout_service.repository.analytics.PersonalRecordRepository;
-import lombok.Data;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
+
+/**
+ * Complete PersonalRecordService
+ */
 
 @Service
 @RequiredArgsConstructor
@@ -38,385 +33,418 @@ import java.util.Objects;
 public class PersonalRecordService {
 
     private final PersonalRecordRepository personalRecordRepository;
-    private final ReactiveMongoTemplate reactiveMongoTemplate;
     private final TransactionalEventPublisher eventPublisher;
 
-
-
     /**
-     * Process a workout and detect any new personal records with event publishing
+     * Main method called from WorkoutService.completeWorkout()
      */
-    public Mono<List<PersonalRecord>> processWorkoutForPRs(Workout workout) {
-        log.info("Processing workout {} for PRs for user {}", workout.getId(), workout.getUserId());
+    public Mono<Void> processWorkoutForPersonalRecords(Workout workout) {
+        log.debug("Processing workout {} for personal records", workout.getId());
 
         return Flux.fromIterable(workout.getExercises())
-                .flatMap(exercise -> checkForPRsWithEvents(workout.getUserId(), exercise, workout))
-                .collectList()
-                .doOnSuccess(prs -> log.info("Found {} new PRs for workout {}", prs.size(), workout.getId()));
+                .flatMap(exercise -> processExerciseForPRs(workout, exercise))
+                .then()
+                .doOnSuccess(v -> log.debug("Completed PR processing for workout {}", workout.getId()))
+                .doOnError(error -> log.error("Error processing PRs for workout {}: {}", workout.getId(), error.getMessage()));
     }
 
     /**
-     * Check for personal records in a single exercise with event publishing
+     * Process exercise for PRs with exercise name
      */
-    private Flux<PersonalRecord> checkForPRsWithEvents(Long userId, WorkoutExercise exercise, Workout workout) {
-        if (exercise.getSets() == null || exercise.getSets().isEmpty()) {
-            return Flux.empty();
-        }
-
-        // Use whatever exercise name is available, fallback to exercise ID if name is null/empty
-        String exerciseName = getDisplayExerciseName(exercise);
-
-        return processExerciseSetsForPRs(userId, exercise.getExerciseId(), exerciseName, exercise.getSets(), workout.getId());
-    }
-
-    /**
-     * Get a displayable exercise name, handling cases where name might be null or generic
-     */
-    private String getDisplayExerciseName(WorkoutExercise exercise) {
-        if (exercise.getExerciseName() != null && !exercise.getExerciseName().trim().isEmpty()) {
-            return exercise.getExerciseName();
-        }
-        // Fallback to exercise ID if no name available
-        return "Exercise " + exercise.getExerciseId();
-    }
-
-    /**
-     * Process exercise sets for PRs and publish events
-     */
-    private Flux<PersonalRecord> processExerciseSetsForPRs(Long userId, String exerciseId,
-                                                           String exerciseName, List<WorkoutSet> sets, String workoutId) {
-        return Flux.fromIterable(sets)
-                .filter(set -> set.getWeightKg() != null && set.getReps() != null && set.getReps() > 0)
-                .flatMap(set -> checkSetForPRsWithEvents(userId, exerciseId, exerciseName, set))
-                .distinct() // Avoid duplicate PRs
-                .flatMap(personalRecord -> {
-                    // Publish PR event for each new personal record using the existing event system
-                    return publishPersonalRecordEvent(personalRecord, workoutId)
-                            .thenReturn(personalRecord)
-                            .onErrorResume(error -> {
-                                log.error("Failed to publish PR event for user {}: {}", userId, error.getMessage());
-                                // Don't fail the PR creation if event publishing fails
-                                return Mono.just(personalRecord);
-                            });
-                });
-    }
-
-    /**
-     * Publish PersonalRecordEvent using the existing TransactionalEventPublisher
-     */
-    private Mono<Void> publishPersonalRecordEvent(PersonalRecord personalRecord, String workoutId) {
-        try {
-            PersonalRecordEvent event = PersonalRecordEvent.builder()
-                    .userId(personalRecord.getUserId())
-                    .exerciseName(personalRecord.getExerciseName())
-                    .exerciseId(personalRecord.getExerciseId())
-                    .recordType(personalRecord.getRecordType())
-                    .newValue(personalRecord.getValue())
-                    .previousValue(personalRecord.getPreviousRecord())
-                    .unit(determineUnit(personalRecord.getRecordType()))
-                    .workoutId(workoutId)
-                    .reps(personalRecord.getReps())
-                    .weight(personalRecord.getWeight())
-                    .achievedAt(personalRecord.getAchievedDate() != null ?
-                            personalRecord.getAchievedDate().atZone(java.time.ZoneOffset.UTC).toInstant() :
-                            Instant.now())
-                    .improvementPercentage(personalRecord.getImprovementPercentage())
-                    .build();
-
-            log.info("Publishing PR event for user {} - {} {} {}",
-                    personalRecord.getUserId(), personalRecord.getValue(),
-                    determineUnit(personalRecord.getRecordType()),
-                    personalRecord.getExerciseName());
-
-            return eventPublisher.publishPersonalRecord(event);
-        } catch (Exception e) {
-            log.error("Error creating PersonalRecordEvent: {}", e.getMessage());
-            return Mono.error(e);
-        }
-    }
-
-    /**
-     * ENHANCED: Check and update personal records with comprehensive retry logic and exercise name
-     */
-    public Mono<List<PersonalRecord>> checkAndUpdatePersonalRecordsWithRetry(Long userId, String exerciseId,
-                                                                             String exerciseName, List<WorkoutSet> sets) {
-        return checkAndUpdatePersonalRecords(userId, exerciseId, exerciseName, sets)
-                .retryWhen(Retry.backoff(3, Duration.ofMillis(100))
-                        .filter(throwable -> throwable instanceof DuplicateKeyException)
-                        .doBeforeRetry(retrySignal ->
-                                log.debug("Retrying personal record update, attempt: {}", retrySignal.totalRetries() + 1)))
-                .onErrorResume(DuplicateKeyException.class, error -> {
-                    log.warn("Failed to update personal records after retries: {}", error.getMessage());
-                    return Mono.just(new ArrayList<>());
-                });
-    }
-
-    /**
-     * FIXED: Check and update personal records for an exercise's sets with exercise name
-     */
-    private Mono<List<PersonalRecord>> checkAndUpdatePersonalRecords(Long userId, String exerciseId,
-                                                                     String exerciseName, List<WorkoutSet> sets) {
-        log.debug("Checking PRs for user {} exercise '{}' ({}) with {} sets",
-                userId, exerciseName, exerciseId, sets != null ? sets.size() : 0);
-
-        if (sets == null || sets.isEmpty()) {
-            return Mono.just(new ArrayList<>());
-        }
-
-        return Flux.fromIterable(sets)
-                .filter(set -> set.getWeightKg() != null && set.getReps() != null && set.getReps() > 0)
-                .flatMap(set -> checkSetForPRsWithRetry(userId, exerciseId, exerciseName, set))
-                .collectList()
-                .doOnSuccess(prs -> log.debug("Found {} new PRs for exercise '{}'", prs.size(), exerciseName))
-                .onErrorResume(error -> {
-                    log.warn("Error checking PRs for user {} exercise '{}': {}", userId, exerciseName, error.getMessage());
-                    return Mono.just(new ArrayList<>());
-                });
-    }
-
-    /**
-     * Check for personal records in a single set with retry and event publishing
-     */
-    private Flux<PersonalRecord> checkSetForPRsWithEvents(Long userId, String exerciseId,
-                                                          String exerciseName, WorkoutSet set) {
-        return checkSetForPRs(userId, exerciseId, exerciseName, set)
-                .onErrorResume(DuplicateKeyException.class, error -> {
-                    log.debug("Duplicate key error when checking set PRs, retrying: {}", error.getMessage());
-                    return Flux.empty(); // Skip this set's PRs if duplicate key error
-                });
-    }
-
-    /**
-     * Check for personal records in a single set with retry
-     */
-    private Flux<PersonalRecord> checkSetForPRsWithRetry(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        return checkSetForPRs(userId, exerciseId, exerciseName, set)
-                .onErrorResume(DuplicateKeyException.class, error -> {
-                    log.debug("Duplicate key error when checking set PRs, retrying: {}", error.getMessage());
-                    return Flux.empty(); // Skip this set's PRs if duplicate key error
-                });
-    }
-
-    /**
-     * Check for personal records in a single set with exercise name
-     */
-    private Flux<PersonalRecord> checkSetForPRs(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        return Flux.concat(
-                checkMaxWeightPRFromSet(userId, exerciseId, exerciseName, set),
-                checkMaxVolumePRFromSet(userId, exerciseId, exerciseName, set),
-                checkMaxRepsPRFromSet(userId, exerciseId, exerciseName, set),
-                checkEstimated1RMPRFromSet(userId, exerciseId, exerciseName, set)
-        ).filter(Objects::nonNull);
-    }
-
-    /**
-     * FIXED: Check for maximum weight PR from a set using upsert with exercise name
-     */
-    private Mono<PersonalRecord> checkMaxWeightPRFromSet(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        BigDecimal currentWeight = set.getWeightKg();
-
-        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_WEIGHT")
-                .flatMap(existingPR -> {
-                    BigDecimal existingWeight = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
-
-                    if (currentWeight.compareTo(existingWeight) > 0) {
-                        return upsertPersonalRecord(userId, exerciseId, exerciseName, set, "MAX_WEIGHT",
-                                currentWeight, existingWeight);
-                    }
-                    return Mono.empty();
-                });
-    }
-
-    /**
-     * FIXED: Check for maximum volume PR from a set using upsert with exercise name
-     */
-    private Mono<PersonalRecord> checkMaxVolumePRFromSet(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        BigDecimal currentVolume = set.getVolume(); // This is already calculated in WorkoutSet
-
-        if (currentVolume == null || currentVolume.compareTo(BigDecimal.ZERO) <= 0) {
-            return Mono.empty();
-        }
-
-        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_VOLUME")
-                .flatMap(existingPR -> {
-                    BigDecimal existingVolume = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
-
-                    if (currentVolume.compareTo(existingVolume) > 0) {
-                        return upsertPersonalRecord(userId, exerciseId, exerciseName, set, "MAX_VOLUME",
-                                currentVolume, existingVolume);
-                    }
-                    return Mono.empty();
-                });
-    }
-
-    /**
-     * FIXED: Check for maximum reps PR from a set using upsert with exercise name
-     */
-    private Mono<PersonalRecord> checkMaxRepsPRFromSet(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        BigDecimal setWeight = set.getWeightKg();
-        Integer setReps = set.getReps();
-
-        return getCurrentOrCreateEmptyPR(userId, exerciseId, "MAX_REPS")
-                .flatMap(existingPR -> {
-                    // Only count as PR if weight is same or higher and reps are more
-                    BigDecimal existingWeight = existingPR.getWeight() != null ? existingPR.getWeight() : BigDecimal.ZERO;
-                    Integer existingReps = existingPR.getReps() != null ? existingPR.getReps() : 0;
-
-                    boolean isNewPR = existingPR.getValue() == null ||
-                            (setWeight.compareTo(existingWeight) >= 0 && setReps > existingReps);
-
-                    if (isNewPR) {
-                        return upsertPersonalRecord(userId, exerciseId, exerciseName, set, "MAX_REPS",
-                                BigDecimal.valueOf(setReps),
-                                existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO);
-                    }
-                    return Mono.empty();
-                });
-    }
-
-    /**
-     * FIXED: Check for estimated 1RM PR from a set using upsert with exercise name
-     */
-    private Mono<PersonalRecord> checkEstimated1RMPRFromSet(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
-        BigDecimal estimated1RM = calculate1RM(set.getWeightKg(), set.getReps());
-
-        return getCurrentOrCreateEmptyPR(userId, exerciseId, "ESTIMATED_1RM")
-                .flatMap(existingPR -> {
-                    BigDecimal existing1RM = existingPR.getValue() != null ? existingPR.getValue() : BigDecimal.ZERO;
-
-                    if (estimated1RM.compareTo(existing1RM) > 0) {
-                        return upsertPersonalRecord(userId, exerciseId, exerciseName, set, "ESTIMATED_1RM",
-                                estimated1RM, existing1RM);
-                    }
-                    return Mono.empty();
-                });
-    }
-
-    /**
-     * CRITICAL FIX: Get current PR or create empty one for comparison
-     */
-    private Mono<PersonalRecord> getCurrentOrCreateEmptyPR(Long userId, String exerciseId, String recordType) {
-        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType)
-                .switchIfEmpty(Mono.just(createEmptyPR()));
-    }
-
-    /**
-     * CRITICAL FIX: Upsert personal record with proper exercise name
-     * This prevents the E11000 duplicate key error by using findAndModify with upsert
-     */
-    private Mono<PersonalRecord> upsertPersonalRecord(Long userId, String exerciseId, String exerciseName,
-                                                      WorkoutSet set, String recordType, BigDecimal value, BigDecimal previousValue) {
-
-        // Create query to find existing record
-        Query query = Query.query(
-                Criteria.where("userId").is(userId)
-                        .and("exerciseId").is(exerciseId)
-                        .and("recordType").is(recordType)
+    private Mono<Void> processExerciseForPRs(Workout workout, WorkoutExercise exercise) {
+        return checkAndUpdatePersonalRecordsWithRetry(
+                workout.getUserId(),
+                exercise.getExerciseId(),
+                exercise.getExerciseName(),
+                exercise.getSets()
         );
-
-        // Calculate improvement percentage
-        Double improvementPercentage = null;
-        if (previousValue != null && previousValue.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal improvement = value.subtract(previousValue)
-                    .divide(previousValue, 4, RoundingMode.HALF_UP)
-                    .multiply(BigDecimal.valueOf(100));
-            improvementPercentage = improvement.doubleValue();
-        }
-
-        // Create update with the new values
-        Update update = new Update()
-                .set("value", value)
-                .set("weight_kg", set.getWeightKg())
-                .set("reps", set.getReps())
-                .set("sets", 1)
-                .set("achievedDate", LocalDateTime.now())
-                .set("previousRecord", previousValue)
-                .set("improvementPercentage", improvementPercentage)
-                .set("exerciseName", exerciseName)
-                // Set on insert only - these won't change if record exists
-                .setOnInsert("userId", userId)
-                .setOnInsert("exerciseId", exerciseId)
-                .setOnInsert("recordType", recordType);
-
-        // Use findAndModify with upsert option
-        FindAndModifyOptions options = new FindAndModifyOptions()
-                .upsert(true)
-                .returnNew(true);
-
-        log.info("Attempting to upsert {} PR for user {} exercise '{}' ({}): {} (previous: {})",
-                recordType, userId, exerciseName, exerciseId, value, previousValue);
-
-        return reactiveMongoTemplate
-                .findAndModify(query, update, options, PersonalRecord.class)
-                .doOnSuccess(savedRecord -> {
-                    if (savedRecord != null) {
-                        log.info("Successfully upserted {} PR: userId={}, exercise='{}', value={}",
-                                recordType, savedRecord.getUserId(), savedRecord.getExerciseName(), savedRecord.getValue());
-                    }
-                })
-                .onErrorResume(DuplicateKeyException.class, error -> {
-                    // If we still get a duplicate key error, try to find the existing record
-                    log.warn("Duplicate key error during upsert for {} PR, attempting to find existing record: {}",
-                            recordType, error.getMessage());
-                    return personalRecordRepository
-                            .findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType)
-                            .doOnSuccess(existingRecord -> {
-                                if (existingRecord != null) {
-                                    log.debug("Found existing {} PR record instead of creating new one", recordType);
-                                }
-                            })
-                            .switchIfEmpty(Mono.error(new RuntimeException("Failed to upsert and find existing record", error)));
-                });
     }
 
     /**
-     * Get recent PRs for a user
+     * Check and update personal records with retry logic
      */
-    public Mono<List<PersonalRecord>> getRecentPRs(Long userId, int days) {
-        LocalDateTime cutoffDate = LocalDateTime.now().minusDays(days);
-        return personalRecordRepository
-                .findByUserIdAndAchievedDateGreaterThanOrderByAchievedDateDesc(userId, cutoffDate)
+    public Mono<Void> checkAndUpdatePersonalRecordsWithRetry(Long userId, String exerciseId, String exerciseName, List<WorkoutSet> sets) {
+        log.debug("Checking PRs for user {} exercise {} with {} sets", userId, exerciseId, sets.size());
+
+        return Flux.fromIterable(sets)
+                .filter(set -> Boolean.TRUE.equals(set.getCompleted())) // Only completed sets
+                .flatMap(set -> checkSetForAllPRs(userId, exerciseId, exerciseName, set))
+                .then()
+                .doOnSuccess(v -> log.debug("Completed PR check for exercise {} with {} sets", exerciseId, sets.size()))
+                .doOnError(error -> log.error("Error checking PRs for exercise {}: {}", exerciseId, error.getMessage()));
+    }
+
+    /**
+     * Detect qualifying PRs for a set WITHOUT updating them - for real-time detection during set logging
+     */
+    public Mono<List<String>> detectQualifyingPRsForSet(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
+        // Only check completed sets
+        if (!Boolean.TRUE.equals(set.getCompleted())) {
+            return Mono.just(List.of());
+        }
+
+        List<Mono<String>> prChecks = new ArrayList<>();
+
+        // Check MAX_WEIGHT PR
+        if (set.getWeightKg() != null && set.getWeightKg().compareTo(BigDecimal.ZERO) > 0) {
+            Mono<String> weightCheck = personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_WEIGHT")
+                    .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_WEIGHT"))
+                    .mapNotNull(existingPR -> {
+                        if (set.getWeightKg().compareTo(existingPR.getValue()) > 0) {
+                            return "MAX_WEIGHT: " + set.getWeightKg() + "kg (was " + existingPR.getValue() + "kg)";
+                        }
+                        return null;
+                    })
+                    .filter(Objects::nonNull);
+            prChecks.add(weightCheck);
+        }
+
+        // Check MAX_REPS PR
+        if (set.getReps() != null && set.getReps() > 0) {
+            Mono<String> repsCheck = personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_REPS")
+                    .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_REPS"))
+                    .mapNotNull(existingPR -> {
+                        BigDecimal newReps = BigDecimal.valueOf(set.getReps());
+                        if (newReps.compareTo(existingPR.getValue()) > 0) {
+                            return "MAX_REPS: " + set.getReps() + " reps (was " + existingPR.getValue().intValue() + " reps)";
+                        }
+                        return null;
+                    })
+                    .filter(Objects::nonNull);
+            prChecks.add(repsCheck);
+        }
+
+        // Check MAX_VOLUME PR
+        if (set.getWeightKg() != null && set.getReps() != null &&
+                set.getWeightKg().compareTo(BigDecimal.ZERO) > 0 && set.getReps() > 0) {
+
+            BigDecimal volume = set.getWeightKg().multiply(BigDecimal.valueOf(set.getReps()));
+
+            Mono<String> volumeCheck = personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_VOLUME")
+                    .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_VOLUME"))
+                    .mapNotNull(existingPR -> {
+                        if (volume.compareTo(existingPR.getValue()) > 0) {
+                            return "MAX_VOLUME: " + volume + "kg (was " + existingPR.getValue() + "kg)";
+                        }
+                        return null;
+                    })
+                    .filter(Objects::nonNull);
+            prChecks.add(volumeCheck);
+        }
+
+        // Check ESTIMATED_1RM PR
+        if (set.getWeightKg() != null && set.getReps() != null &&
+                set.getWeightKg().compareTo(BigDecimal.ZERO) > 0 && set.getReps() > 0 && set.getReps() <= 10) {
+
+            BigDecimal estimated1RM = calculateEstimated1RM(set.getWeightKg(), set.getReps());
+
+            Mono<String> e1rmCheck = personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "ESTIMATED_1RM")
+                    .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "ESTIMATED_1RM"))
+                    .mapNotNull(existingPR -> {
+                        if (estimated1RM.compareTo(existingPR.getValue()) > 0) {
+                            return "ESTIMATED_1RM: " + estimated1RM + "kg (was " + existingPR.getValue() + "kg)";
+                        }
+                        return null;
+                    })
+                    .filter(Objects::nonNull);
+            prChecks.add(e1rmCheck);
+        }
+
+        // Combine all checks and return list of qualifying PRs
+        return Flux.mergeSequential(prChecks)
                 .collectList();
     }
 
     /**
-     * Get all PRs for a user
+     * Check a single set for all types of PRs
      */
-    public Flux<PersonalRecord> getAllPRs(Long userId) {
-        return personalRecordRepository.findByUserIdOrderByAchievedDateDesc(userId);
+    private Mono<Void> checkSetForAllPRs(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
+        return Mono.empty()
+                .then(Mono.defer(() -> {
+                    // Check MAX_WEIGHT PR
+                    if (set.getWeightKg() != null && set.getWeightKg().compareTo(BigDecimal.ZERO) > 0) {
+                        return checkWeightPR(userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                }))
+                .then(Mono.defer(() -> {
+                    // Check MAX_REPS PR
+                    if (set.getReps() != null && set.getReps() > 0) {
+                        return checkRepsPR(userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                }))
+                .then(Mono.defer(() -> {
+                    // Check MAX_VOLUME PR (weight × reps)
+                    if (set.getWeightKg() != null && set.getReps() != null &&
+                            set.getWeightKg().compareTo(BigDecimal.ZERO) > 0 && set.getReps() > 0) {
+                        BigDecimal volume = set.getWeightKg().multiply(BigDecimal.valueOf(set.getReps()));
+                        return checkVolumePR(userId, exerciseId, exerciseName, set, volume);
+                    }
+                    return Mono.empty();
+                }))
+                .then(Mono.defer(() -> {
+                    // Check ESTIMATED_1RM PR if we have enough data
+                    if (set.getWeightKg() != null && set.getReps() != null &&
+                            set.getWeightKg().compareTo(BigDecimal.ZERO) > 0 && set.getReps() > 0 && set.getReps() <= 10) {
+                        BigDecimal estimated1RM = calculateEstimated1RM(set.getWeightKg(), set.getReps());
+                        return checkEstimated1RMPR(userId, exerciseId, exerciseName, set, estimated1RM);
+                    }
+                    return Mono.empty();
+                }));
     }
 
     /**
-     * Get PRs for a specific exercise
+     * Check weight PR
+     */
+    private Mono<Void> checkWeightPR(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_WEIGHT")
+                .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_WEIGHT"))
+                .flatMap(existingPR -> {
+                    if (set.getWeightKg().compareTo(existingPR.getValue()) > 0) {
+                        return updatePR(existingPR, set.getWeightKg(), userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * Check reps PR
+     */
+    private Mono<Void> checkRepsPR(Long userId, String exerciseId, String exerciseName, WorkoutSet set) {
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_REPS")
+                .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_REPS"))
+                .flatMap(existingPR -> {
+                    BigDecimal newReps = BigDecimal.valueOf(set.getReps());
+                    if (newReps.compareTo(existingPR.getValue()) > 0) {
+                        return updatePR(existingPR, newReps, userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * Check volume PR
+     */
+    private Mono<Void> checkVolumePR(Long userId, String exerciseId, String exerciseName, WorkoutSet set, BigDecimal volume) {
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "MAX_VOLUME")
+                .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_VOLUME"))
+                .flatMap(existingPR -> {
+                    if (volume.compareTo(existingPR.getValue()) > 0) {
+                        return updatePR(existingPR, volume, userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * Check estimated 1RM PR
+     */
+    private Mono<Void> checkEstimated1RMPR(Long userId, String exerciseId, String exerciseName, WorkoutSet set, BigDecimal estimated1RM) {
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, "ESTIMATED_1RM")
+                .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "ESTIMATED_1RM"))
+                .flatMap(existingPR -> {
+                    if (estimated1RM.compareTo(existingPR.getValue()) > 0) {
+                        return updatePR(existingPR, estimated1RM, userId, exerciseId, exerciseName, set);
+                    }
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * Create empty PR for comparison
+     */
+    private PersonalRecord createEmptyPR(Long userId, String exerciseId, String exerciseName, String recordType) {
+        return PersonalRecord.builder()
+                .userId(userId)
+                .exerciseId(exerciseId)
+                .exerciseName(exerciseName)
+                .recordType(recordType)
+                .value(BigDecimal.ZERO)
+                .verified(true)
+                .build();
+    }
+
+    /**
+     * Update/create a personal record and publish event
+     */
+    private Mono<Void> updatePR(PersonalRecord existingPR, BigDecimal newValue, Long userId, String exerciseId,
+                                String exerciseName, WorkoutSet set) {
+
+        BigDecimal previousValue = existingPR.getValue();
+
+        // Update the PR
+        existingPR.setPreviousRecord(previousValue);
+        existingPR.setValue(newValue);
+        existingPR.setWeight(set.getWeightKg());
+        existingPR.setReps(set.getReps());
+        existingPR.setSets(1);
+        existingPR.setAchievedDate(LocalDateTime.now());
+        existingPR.setVerified(true);
+
+        if (previousValue.compareTo(BigDecimal.ZERO) > 0) {
+            double improvement = ((newValue.doubleValue() - previousValue.doubleValue()) / previousValue.doubleValue()) * 100.0;
+            existingPR.setImprovementPercentage(improvement);
+        }
+
+        return personalRecordRepository.save(existingPR)
+                .flatMap(savedPR -> {
+                    log.info("New {} PR for user {} exercise {}: {} (was {})",
+                            savedPR.getRecordType(), userId, exerciseId, newValue, previousValue);
+
+                    // Publish PersonalRecordEvent for gamification
+                    return publishPersonalRecordEvent(savedPR, exerciseName);
+                })
+                .then();
+    }
+
+    /**
+     * Calculate estimated 1RM using Epley formula
+     */
+    private BigDecimal calculateEstimated1RM(BigDecimal weight, Integer reps) {
+        if (reps == 1) {
+            return weight;
+        }
+        double multiplier = 1.0 + (reps.doubleValue() / 30.0);
+        return weight.multiply(BigDecimal.valueOf(multiplier));
+    }
+
+    /**
+     * Publish PersonalRecordEvent - FIXED to use correct types
+     */
+    private Mono<Void> publishPersonalRecordEvent(PersonalRecord pr, String exerciseName) {
+        PersonalRecordEvent event = PersonalRecordEvent.builder()
+                .userId(pr.getUserId())
+                .exerciseName(exerciseName)
+                .recordType(pr.getRecordType())
+                .newValue(BigDecimal.valueOf(pr.getValue().doubleValue()))
+                .previousValue(BigDecimal.valueOf(pr.getPreviousRecord() != null ? pr.getPreviousRecord().doubleValue() : null))
+                .unit(getUnitForRecordType(pr.getRecordType()))
+                .workoutId(pr.getWorkoutId())
+                .reps(pr.getReps())
+                .achievedAt(Instant.now())
+                .build();
+
+        // Use YOUR existing publishPersonalRecord method
+        return eventPublisher.publishPersonalRecord(event)
+                .doOnSuccess(v -> log.debug("Published PersonalRecordEvent for {} PR", pr.getRecordType()))
+                .doOnError(error -> log.warn("Failed to publish PersonalRecordEvent: {}", error.getMessage()))
+                .onErrorResume(error -> Mono.empty()); // Don't fail PR saving if event publishing fails
+    }
+
+    /**
+     * Get unit for record type
+     */
+    private String getUnitForRecordType(String recordType) {
+        return switch (recordType) {
+            case "MAX_WEIGHT", "ESTIMATED_1RM" -> "kg";
+            case "MAX_REPS" -> "reps";
+            case "MAX_VOLUME" -> "kg";
+            default -> "units";
+        };
+    }
+
+    // PUBLIC QUERY METHODS (these fix the missing method compilation errors)
+
+    /**
+     * Get exercise PRs - fixes the missing method error
      */
     public Flux<PersonalRecord> getExercisePRs(Long userId, String exerciseId) {
         return personalRecordRepository.findByUserIdAndExerciseIdOrderByAchievedDateDesc(userId, exerciseId);
     }
 
     /**
-     * Get current PR for an exercise and record type
+     * Get all PRs for a user
      */
-    public Mono<PersonalRecord> getCurrentPR(Long userId, String exerciseId, String recordType) {
+    public Flux<PersonalRecord> getAllPersonalRecords(Long userId) {
+        return personalRecordRepository.findByUserIdOrderByAchievedDateDesc(userId);
+    }
+
+    /**
+     * Get PRs for specific exercise
+     */
+    public Flux<PersonalRecord> getPersonalRecords(Long userId, String exerciseId) {
+        return personalRecordRepository.findByUserIdAndExerciseIdOrderByAchievedDateDesc(userId, exerciseId);
+    }
+
+    /**
+     * Get specific PR type
+     */
+    public Mono<PersonalRecord> getPersonalRecord(Long userId, String exerciseId, String recordType) {
         return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType);
     }
 
     /**
-     * Get PR statistics for a user
+     * Get recent PRs for analytics
+     */
+    public Mono<List<PersonalRecord>> getRecentPRs(Long userId, int days) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
+        return personalRecordRepository.findByUserIdAndAchievedDateGreaterThanOrderByAchievedDateDesc(userId, cutoff)
+                .collectList();
+    }
+
+    /**
+     * Get PR statistics - fixes the missing getPRStatistics method
      */
     public Mono<PRStatistics> getPRStatistics(Long userId) {
-        return Mono.zip(
-                        personalRecordRepository.countByUserId(userId),
-                        personalRecordRepository.countByUserIdAndAchievedDateBetween(
-                                userId, LocalDateTime.now().minusDays(30), LocalDateTime.now()),
-                        personalRecordRepository.countByUserIdAndAchievedDateBetween(
-                                userId, LocalDateTime.now().minusDays(7), LocalDateTime.now()))
-                .map(tuple -> {
-                    PRStatistics stats = new PRStatistics();
-                    stats.setTotalPRs(tuple.getT1().intValue());
-                    stats.setPRsLast30Days(tuple.getT2().intValue());
-                    stats.setPRsLast7Days(tuple.getT3().intValue());
-                    return stats;
-                });
+        return personalRecordRepository.findByUserIdOrderByAchievedDateDesc(userId)
+                .collectList()
+                .map(this::calculatePRStatistics);
+    }
+
+    /**
+     * Calculate PR statistics from PR list - FIXED the compatibility issue
+     */
+    private PRStatistics calculatePRStatistics(List<PersonalRecord> prs) {
+        if (prs.isEmpty()) {
+            return PRStatistics.builder()
+                    .totalPRs(0)
+                    .prsThisMonth(0)
+                    .prsThisWeek(0)
+                    .prsByType(Map.of())
+                    .build();
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime weekAgo = now.minusWeeks(1);
+        LocalDateTime monthAgo = now.minusMonths(1);
+
+        int prsThisWeek = (int) prs.stream()
+                .filter(pr -> pr.getAchievedDate().isAfter(weekAgo))
+                .count();
+
+        int prsThisMonth = (int) prs.stream()
+                .filter(pr -> pr.getAchievedDate().isAfter(monthAgo))
+                .count();
+
+        Map<String, Integer> prsByType = prs.stream()
+                .collect(Collectors.groupingBy(
+                        PersonalRecord::getRecordType,
+                        Collectors.collectingAndThen(Collectors.counting(), Math::toIntExact)
+                ));
+
+        double averageImprovement = prs.stream()
+                .filter(pr -> pr.getImprovementPercentage() != null)
+                .mapToDouble(PersonalRecord::getImprovementPercentage)
+                .average()
+                .orElse(0.0);
+
+        return PRStatistics.builder()
+                .totalPRs(prs.size())
+                .prsThisWeek(prsThisWeek)
+                .prsThisMonth(prsThisMonth)
+                .lastPRDate(prs.isEmpty() ? null : prs.getFirst().getAchievedDate()) // FIXED: Use get(0) for compatibility
+                .prsByType(prsByType)
+                .averageImprovement(averageImprovement)
+                .build();
+    }
+
+
+    /**
+     * Get all PRs for a user
+     */
+    public Flux<PersonalRecord> getAllPRs(Long userId) {
+        return personalRecordRepository.findByUserIdOrderByAchievedDateDesc(userId);
     }
 
     /**
@@ -437,61 +465,4 @@ public class PersonalRecordService {
                 .flatMap(personalRecordRepository::delete)
                 .doOnSuccess(v -> log.info("Deleted PR {} for user {}", prId, userId));
     }
-
-    // HELPER METHODS
-
-    /**
-     * Create an empty PersonalRecord for comparison
-     */
-    private PersonalRecord createEmptyPR() {
-        return PersonalRecord.builder()
-                .value(null)
-                .previousRecord(null)
-                .build();
-    }
-
-    /**
-     * Calculate 1RM using Epley formula
-     */
-    private BigDecimal calculate1RM(BigDecimal weight, int reps) {
-        if (reps == 1) return weight;
-
-        // Epley formula: weight * (1 + reps/30)
-        BigDecimal multiplier = BigDecimal.ONE.add(
-                BigDecimal.valueOf(reps).divide(BigDecimal.valueOf(30), 4, RoundingMode.HALF_UP));
-        return weight.multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * Determine unit based on record type
-     */
-    private String determineUnit(String recordType) {
-        return switch (recordType) {
-            case "MAX_WEIGHT", "ESTIMATED_1RM" -> "kg";
-            case "MAX_VOLUME" -> "kg";
-            case "MAX_REPS" -> "reps";
-            default -> "units";
-        };
-    }
-
-    // INNER CLASSES
-
-    /**
-     * PR statistics data class
-     */
-    @Data
-    @Getter
-    @Setter
-    public static class PRStatistics {
-        private Integer totalPRs;
-        private Integer pRsLast30Days;
-        private Integer pRsLast7Days;
-
-        // Explicit getters for consistent naming
-        public Integer getPRsLast30Days() { return pRsLast30Days; }
-        public void setPRsLast30Days(Integer pRsLast30Days) { this.pRsLast30Days = pRsLast30Days; }
-        public Integer getPRsLast7Days() { return pRsLast7Days; }
-        public void setPRsLast7Days(Integer pRsLast7Days) { this.pRsLast7Days = pRsLast7Days; }
-    }
-
  }
