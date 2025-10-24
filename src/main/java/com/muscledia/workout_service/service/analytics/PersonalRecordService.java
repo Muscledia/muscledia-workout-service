@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -56,18 +57,20 @@ public class PersonalRecordService {
                 workout.getUserId(),
                 exercise.getExerciseId(),
                 exercise.getExerciseName(),
-                exercise.getSets()
+                exercise.getSets(),
+                workout.getId()
         );
     }
 
     /**
      * Check and update personal records with retry logic
      */
-    public Mono<Void> checkAndUpdatePersonalRecordsWithRetry(Long userId, String exerciseId, String exerciseName, List<WorkoutSet> sets) {
+    public Mono<Void> checkAndUpdatePersonalRecordsWithRetry(Long userId, String exerciseId, String exerciseName,
+                                                             List<WorkoutSet> sets, String workoutId) {
         log.debug("Checking PRs for user {} exercise {} with {} sets", userId, exerciseId, sets.size());
 
         return Flux.fromIterable(sets)
-                .filter(set -> Boolean.TRUE.equals(set.getCompleted())) // Only completed sets
+                .filter(set -> Boolean.TRUE.equals(set.getCompleted()))
                 .flatMap(set -> checkSetForAllPRs(userId, exerciseId, exerciseName, set))
                 .then()
                 .doOnSuccess(v -> log.debug("Completed PR check for exercise {} with {} sets", exerciseId, sets.size()))
@@ -202,7 +205,8 @@ public class PersonalRecordService {
                 .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_WEIGHT"))
                 .flatMap(existingPR -> {
                     if (set.getWeightKg().compareTo(existingPR.getValue()) > 0) {
-                        return updatePR(existingPR, set.getWeightKg(), userId, exerciseId, exerciseName, set);
+                        return updatePR(userId, exerciseId, exerciseName, "MAX_WEIGHT",
+                                set.getWeightKg(), set.getReps(), set.getWeightKg(),null);
                     }
                     return Mono.empty();
                 });
@@ -217,7 +221,8 @@ public class PersonalRecordService {
                 .flatMap(existingPR -> {
                     BigDecimal newReps = BigDecimal.valueOf(set.getReps());
                     if (newReps.compareTo(existingPR.getValue()) > 0) {
-                        return updatePR(existingPR, newReps, userId, exerciseId, exerciseName, set);
+                        return updatePR(userId, exerciseId, exerciseName, "MAX_REPS",
+                                newReps, set.getReps(), set.getWeightKg(), null);
                     }
                     return Mono.empty();
                 });
@@ -231,7 +236,8 @@ public class PersonalRecordService {
                 .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "MAX_VOLUME"))
                 .flatMap(existingPR -> {
                     if (volume.compareTo(existingPR.getValue()) > 0) {
-                        return updatePR(existingPR, volume, userId, exerciseId, exerciseName, set);
+                        return updatePR(userId, exerciseId, exerciseName, "MAX_VOLUME",
+                                volume, set.getReps(), set.getWeightKg(), null);
                     }
                     return Mono.empty();
                 });
@@ -245,7 +251,8 @@ public class PersonalRecordService {
                 .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, "ESTIMATED_1RM"))
                 .flatMap(existingPR -> {
                     if (estimated1RM.compareTo(existingPR.getValue()) > 0) {
-                        return updatePR(existingPR, estimated1RM, userId, exerciseId, exerciseName, set);
+                        return updatePR(userId, exerciseId, exerciseName, "ESTIMATED_1RM",
+                                estimated1RM, set.getReps(), set.getWeightKg(), null);
                     }
                     return Mono.empty();
                 });
@@ -268,32 +275,43 @@ public class PersonalRecordService {
     /**
      * Update/create a personal record and publish event
      */
-    private Mono<Void> updatePR(PersonalRecord existingPR, BigDecimal newValue, Long userId, String exerciseId,
-                                String exerciseName, WorkoutSet set) {
+    private Mono<Void> updatePR(Long userId, String exerciseId, String exerciseName,
+                                String recordType, BigDecimal newValue,
+                                Integer reps, BigDecimal weight, String workoutId) {
 
-        BigDecimal previousValue = existingPR.getValue();
+        return personalRecordRepository.findByUserIdAndExerciseIdAndRecordType(userId, exerciseId, recordType)
+                .defaultIfEmpty(createEmptyPR(userId, exerciseId, exerciseName, recordType))
+                .flatMap(existingPR -> {
+                    // Check if this is actually a new record
+                    if (existingPR.getValue() != null && newValue.compareTo(existingPR.getValue()) <= 0) {
+                        log.debug("Value {} is not better than existing {} for {}", newValue, existingPR.getValue(), recordType);
+                        return Mono.empty();
+                    }
 
-        // Update the PR
-        existingPR.setPreviousRecord(previousValue);
-        existingPR.setValue(newValue);
-        existingPR.setWeight(set.getWeightKg());
-        existingPR.setReps(set.getReps());
-        existingPR.setSets(1);
-        existingPR.setAchievedDate(LocalDateTime.now());
-        existingPR.setVerified(true);
+                    BigDecimal previousValue = existingPR.getValue();
 
-        if (previousValue.compareTo(BigDecimal.ZERO) > 0) {
-            double improvement = ((newValue.doubleValue() - previousValue.doubleValue()) / previousValue.doubleValue()) * 100.0;
-            existingPR.setImprovementPercentage(improvement);
-        }
+                    // Update the record
+                    existingPR.setPreviousRecord(previousValue);
+                    existingPR.setValue(newValue);
+                    existingPR.setAchievedDate(LocalDateTime.now());
+                    existingPR.setReps(reps);
+                    existingPR.setWeight(weight);
+                    existingPR.setWorkoutId(workoutId);
+                    existingPR.setExerciseId(exerciseId); // Make sure this is set
 
-        return personalRecordRepository.save(existingPR)
-                .flatMap(savedPR -> {
-                    log.info("New {} PR for user {} exercise {}: {} (was {})",
-                            savedPR.getRecordType(), userId, exerciseId, newValue, previousValue);
+                    if (previousValue != null) {
+                        BigDecimal improvement = newValue.subtract(previousValue)
+                                .divide(previousValue, 4, RoundingMode.HALF_UP)
+                                .multiply(BigDecimal.valueOf(100));
+                        existingPR.setImprovementPercentage(improvement.doubleValue());
+                    }
 
-                    // Publish PersonalRecordEvent for gamification
-                    return publishPersonalRecordEvent(savedPR, exerciseName);
+                    return personalRecordRepository.save(existingPR)
+                            .flatMap(savedPR -> {
+                                log.info("New {} PR for user {} exercise {}: {} (was {})",
+                                        savedPR.getRecordType(), userId, exerciseId, newValue, previousValue);
+                                return publishPersonalRecordEvent(savedPR, exerciseName);
+                            });
                 })
                 .then();
     }
@@ -316,9 +334,10 @@ public class PersonalRecordService {
         PersonalRecordEvent event = PersonalRecordEvent.builder()
                 .userId(pr.getUserId())
                 .exerciseName(exerciseName)
+                .exerciseId(pr.getExerciseId())
                 .recordType(pr.getRecordType())
                 .newValue(BigDecimal.valueOf(pr.getValue().doubleValue()))
-                .previousValue(BigDecimal.valueOf(pr.getPreviousRecord() != null ? pr.getPreviousRecord().doubleValue() : null))
+                .previousValue(pr.getPreviousRecord() != null ? pr.getPreviousRecord() : BigDecimal.ZERO)
                 .unit(getUnitForRecordType(pr.getRecordType()))
                 .workoutId(pr.getWorkoutId())
                 .reps(pr.getReps())
