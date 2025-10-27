@@ -138,4 +138,4 @@ workout:
 kafka:
   topics:
     workout-events: workout-events
-    personal-record-events: personal-record-events  # New topic for PR events
+    personal-records-events: personal-records-events  # New topic for PR events
