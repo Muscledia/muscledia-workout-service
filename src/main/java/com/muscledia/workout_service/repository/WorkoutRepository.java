@@ -238,4 +238,8 @@ public interface WorkoutRepository extends ReactiveMongoRepository<Workout, Stri
             "  ?#{ [3] != null ? { 'rating': { $gte: [3] } } : {} } " +
             "] }")
     Flux<Workout> findWithOptionalFilters(Long userId, String workoutType, String location, Integer minRating);
+
+    Flux<Workout> findByUserIdAndWorkoutDateGreaterThanEqualOrderByWorkoutDateDesc(Long userId, LocalDateTime startDate);
+
+    Flux<Workout> findByUserIdAndWorkoutDateLessThanEqualOrderByWorkoutDateDesc(Long userId, LocalDateTime endDate);
 }
