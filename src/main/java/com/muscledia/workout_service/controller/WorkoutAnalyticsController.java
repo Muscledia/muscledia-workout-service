@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.controller;
 
+import com.muscledia.workout_service.dto.response.analytics.PRStatistics;
 import com.muscledia.workout_service.dto.response.analytics.ProgressTrackingResponse;
 import com.muscledia.workout_service.dto.response.analytics.WorkoutAnalyticsResponse;
 import com.muscledia.workout_service.model.analytics.PersonalRecord;
@@ -174,7 +175,7 @@ public class WorkoutAnalyticsController {
                         @ApiResponse(responseCode = "200", description = "PR statistics retrieved successfully"),
                         @ApiResponse(responseCode = "401", description = "Authentication required")
         })
-        public Mono<PersonalRecordService.PRStatistics> getPRStatistics() {
+        public Mono<PRStatistics> getPRStatistics() {
                 return authenticationService.getCurrentUserId()
                                 .flatMap(personalRecordService::getPRStatistics)
                                 .doOnSuccess(stats -> log.info("Retrieved PR statistics"));
