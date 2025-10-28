@@ -287,7 +287,7 @@ public class WorkoutController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
 
         return authenticationService.getCurrentUserId()
-                .flatMapMany(userId -> workoutService.getUserWorkouts(userId, startDate, endDate))
+                .flatMapMany(userId -> workoutService.getUserWorkouts(userId, startDate.atStartOfDay(), endDate.atStartOfDay()))
                 .map(this::convertToResponse);
     }
 
@@ -938,45 +938,6 @@ public class WorkoutController {
         }
     }
 
-    @GetMapping("/debug/simulate-workout-completion")
-    public ResponseEntity<Map<String, Object>> simulateWorkoutCompletion() {
-        return authenticationService.getCurrentUserId()
-                .flatMap(userId -> {
-                    // Create a test WorkoutCompletedEvent
-                    WorkoutCompletedEvent testEvent = WorkoutCompletedEvent.builder()
-                            .eventId(java.util.UUID.randomUUID().toString())
-                            .userId(userId)
-                            .workoutId("test-workout-" + System.currentTimeMillis())
-                            .workoutType("STRENGTH")
-                            .durationMinutes(45)
-                            .caloriesBurned(350)
-                            .exercisesCompleted(5)
-                            .totalSets(15)
-                            .totalReps(150)
-                            .totalVolume(new java.math.BigDecimal("2500.00"))
-                            .workedMuscleGroups(java.util.List.of("chest", "shoulders", "triceps"))
-                            .workoutStartTime(java.time.Instant.now().minusSeconds(2700)) // 45 min ago
-                            .workoutEndTime(java.time.Instant.now())
-                            .timestamp(java.time.Instant.now())
-                            .metadata(java.util.Map.of("test", true, "source", "debug-endpoint"))
-                            .build();
-
-                    // Save to outbox
-                    return eventOutboxService.saveEvent(testEvent)
-                            .map(savedEvent -> {
-                                Map<String, Object> response = new HashMap<>();
-                                response.put("message", "✅ Test WorkoutCompletedEvent created and saved to outbox");
-                                response.put("eventId", testEvent.getEventId());
-                                response.put("workoutId", testEvent.getWorkoutId());
-                                response.put("outboxId", savedEvent.getId());
-                                response.put("status", savedEvent.getStatus());
-                                response.put("topic", savedEvent.getTopic());
-                                response.put("note", "Event will be processed by scheduler within 5 seconds");
-                                return ResponseEntity.ok(response);
-                            });
-                })
-                .block(); // For simplicity in debug endpoint
-    }
 
     @GetMapping("/debug/test-kafka-health")
     public ResponseEntity<Map<String, Object>> testKafkaHealth() {
