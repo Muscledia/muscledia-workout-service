@@ -60,6 +60,7 @@ public class PersonalRecordEvent extends BaseEvent {
     /**
      * Workout ID where this PR was achieved
      */
+    @NotBlank
     private String workoutId;
 
     /**
