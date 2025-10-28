@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -48,6 +49,7 @@ public class WorkoutOrchestrator {
     private final WorkoutRepository repository;
     private final TransactionalEventPublisher eventPublisher;
     private final TransactionalOperator transactionalOperator;
+    private final PersonalRecordService personalRecordService;
 
     /**
      * Complete workout using pure DDD orchestration
@@ -130,10 +132,17 @@ public class WorkoutOrchestrator {
                     return calculateMetricsUsingDomain(workoutData);
                 })
                 .flatMap(metrics -> publishWorkoutCompletedEvent(completedWorkout, metrics))
+                .flatMap(event ->
+                        // PROCESS PERSONAL RECORDS SYNCHRONOUSLY
+                        personalRecordService.processWorkoutForPersonalRecords(completedWorkout.getId(), completedWorkout.getUserId())
+                                .flatMapMany(Flux::fromIterable)
+                                .flatMap(eventPublisher::publishPersonalRecord)
+                                .collectList()
+                                .doOnSuccess(prEvents -> log.info("📊 Processed {} PersonalRecord events", prEvents.size()))
+                                .then(Mono.just(event))
+                )
                 .then(Mono.just(completedWorkout))
-                .doOnSuccess(workout -> log.info("✅ Domain metrics calculated and event published for workout: {}", workout.getId()))
-                .doOnError(error -> log.error("❌ Failed to calculate metrics or publish event for workout {}: {}",
-                        completedWorkout.getId(), error.getMessage()));
+                .doOnSuccess(workout -> log.info("✅ Domain metrics calculated and events published for workout: {}", workout.getId()));
     }
 
     /**
