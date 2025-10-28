@@ -3,23 +3,18 @@ package com.muscledia.workout_service.service;
 import com.muscledia.workout_service.domain.service.WorkoutCalculationService;
 import com.muscledia.workout_service.domain.service.WorkoutOrchestrator;
 import com.muscledia.workout_service.domain.service.WorkoutValidationService;
-import com.muscledia.workout_service.domain.vo.WorkoutMetrics;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
 import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
-import com.muscledia.workout_service.event.WorkoutCompletedEvent;
-import com.muscledia.workout_service.event.publisher.TransactionalEventPublisher;
 import com.muscledia.workout_service.exception.ExerciseNotFoundException;
 import com.muscledia.workout_service.exception.InvalidWorkoutStateException;
 import com.muscledia.workout_service.exception.WorkoutNotFoundException;
 import com.muscledia.workout_service.model.Workout;
 import com.muscledia.workout_service.model.WorkoutPlan;
-import com.muscledia.workout_service.model.analytics.PersonalRecord;
 import com.muscledia.workout_service.model.embedded.PlannedExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutSet;
 import com.muscledia.workout_service.model.enums.WorkoutStatus;
 import com.muscledia.workout_service.repository.WorkoutRepository;
-import com.muscledia.workout_service.service.analytics.PersonalRecordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,7 +28,6 @@ import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * DECOUPLED WorkoutService - Clean Architecture
