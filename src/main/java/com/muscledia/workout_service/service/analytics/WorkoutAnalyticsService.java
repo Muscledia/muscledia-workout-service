@@ -61,7 +61,7 @@ public class WorkoutAnalyticsService {
         log.info("Calculating new analytics for user {} period {} from {} to {}",
                 userId, period, periodStart, periodEnd);
 
-        return workoutService.getUserWorkouts(userId, periodStart.toLocalDate(), periodEnd.toLocalDate())
+        return workoutService.getUserWorkouts(userId, periodStart.toLocalDate().atStartOfDay(), periodEnd.toLocalDate().atStartOfDay())
                 .collectList()
                 .flatMap(workouts -> calculationService.calculateWorkoutAnalytics(
                         userId, period, periodStart, periodEnd, workouts))
