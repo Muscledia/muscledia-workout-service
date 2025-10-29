@@ -69,6 +69,9 @@ public class PersonalRecord {
     @Schema(description = "ID of the workout where this record was achieved")
     private String workoutId;
 
+    @Field("unit")
+    private String unit; // "kg", "lbs", "minutes", "reps"
+
     @Indexed
     @Field("achieved_date")
     @JsonProperty("achievedDate")

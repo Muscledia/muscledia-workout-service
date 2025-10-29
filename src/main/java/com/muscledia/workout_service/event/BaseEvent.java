@@ -27,7 +27,8 @@ import java.util.UUID;
         property = "eventType"
 )
 @JsonSubTypes({
-        @JsonSubTypes.Type(value = WorkoutCompletedEvent.class, name = "WORKOUT_COMPLETED")
+        @JsonSubTypes.Type(value = WorkoutCompletedEvent.class, name = "WORKOUT_COMPLETED"),
+        @JsonSubTypes.Type(value = PersonalRecordEvent.class, name = "PERSONAL_RECORD")
         // Add other event types here if workout-service ever publishes more
 })
 public abstract class BaseEvent {

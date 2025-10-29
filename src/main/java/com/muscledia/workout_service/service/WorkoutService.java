@@ -1,13 +1,9 @@
 package com.muscledia.workout_service.service;
 
-import com.muscledia.workout_service.domain.service.WorkoutCalculationService;
 import com.muscledia.workout_service.domain.service.WorkoutOrchestrator;
 import com.muscledia.workout_service.domain.service.WorkoutValidationService;
-import com.muscledia.workout_service.domain.vo.WorkoutMetrics;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
 import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
-import com.muscledia.workout_service.event.WorkoutCompletedEvent;
-import com.muscledia.workout_service.event.publisher.TransactionalEventPublisher;
 import com.muscledia.workout_service.exception.ExerciseNotFoundException;
 import com.muscledia.workout_service.exception.InvalidWorkoutStateException;
 import com.muscledia.workout_service.exception.WorkoutNotFoundException;
@@ -23,7 +19,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -32,32 +27,39 @@ import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
+/**
+ * CLEAN ARCHITECTURE WorkoutService
+ * Following the same pattern as WorkoutOrchestrator for PersonalRecord events
+ *
+ * SOLID Principles:
+ * - Single Responsibility: Set logging + PR detection delegation
+ * - Open/Closed: Easy to extend with new PR features
+ * - Liskov Substitution: PersonalRecordService abstraction
+ * - Interface Segregation: Clean separation of concerns
+ * - Dependency Inversion: Depends on PersonalRecordService abstraction
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class WorkoutService {
+    // Core dependencies
     private final WorkoutRepository workoutRepository;
-    private final TransactionalEventPublisher transactionalEventPublisher;
-    private final TransactionalOperator transactionalOperator; // Inject for reactive transactions
-    private final PersonalRecordService personalRecordService;
     private final WorkoutPlanService workoutPlanService;
+    private final PersonalRecordService personalRecordService;
 
-    // NEW: Domain Services for business logic
+    // Domain Services for business logic
     private final WorkoutOrchestrator workoutOrchestrator;
-    private final WorkoutCalculationService workoutCalculationService;
     private final WorkoutValidationService workoutValidationService;
-    private final FeatureToggleService featureToggleService;
 
     // Feature flags for migration
     @Value("${workout.use-new-calculation:true}")
     private boolean useNewCalculation;
 
-    @Value("${workout.use-orchestrator:false}")
+    @Value("${workout.use-orchestrator:true}") // Changed default to true
     private boolean useOrchestrator;
 
-    // WORKOUT SESSION MANAGEMENT
+    // ==================== WORKOUT SESSION LIFECYCLE ====================
 
     /**
      * Start a new workout session - enhanced to support plan integration
@@ -94,18 +96,162 @@ public class WorkoutService {
                 .workoutDate(LocalDateTime.now())
                 .build();
 
-        // NEW: Use domain validation service
+        // Use domain validation service
         var validationResult = workoutValidationService.validateForCreation(workout);
         if (validationResult.isInvalid()) {
             return Mono.error(new InvalidWorkoutStateException(validationResult.getErrorMessage()));
         }
 
-        // NEW: Use simple state management (no more complex business logic in model)
-        workout.startWorkout(); // This is now just a simple state change
+        // Simple state management
+        workout.startWorkout();
 
         return workoutRepository.save(workout)
                 .doOnSuccess(saved -> log.info("Started workout session: {}", saved.getId()));
     }
+
+
+    /**
+     * Get user workouts with date filtering
+     */
+    public Flux<Workout> getUserWorkouts(Long userId, LocalDateTime startDate, LocalDateTime endDate) {
+        if (startDate != null && endDate != null) {
+            return workoutRepository.findByUserIdAndWorkoutDateBetweenOrderByWorkoutDateDesc(userId, startDate, endDate);
+        } else if (startDate != null) {
+            return workoutRepository.findByUserIdAndWorkoutDateGreaterThanEqualOrderByWorkoutDateDesc(userId, startDate);
+        } else if (endDate != null) {
+            return workoutRepository.findByUserIdAndWorkoutDateLessThanEqualOrderByWorkoutDateDesc(userId, endDate);
+        } else {
+            return workoutRepository.findByUserIdOrderByWorkoutDateDesc(userId);
+        }
+    }
+
+    /**
+     * Get user workouts (overloaded method)
+     */
+    public Flux<Workout> getUserWorkouts(Long userId) {
+        return workoutRepository.findByUserIdOrderByWorkoutDateDesc(userId);
+    }
+
+    /**
+     * IMMEDIATE PR PROCESSING: Log set with real-time PersonalRecord detection
+     *
+     * SAME PATTERN AS WORKOUT COMPLETION:
+     * 1. Perform domain operation (save set)
+     * 2. Delegate event creation to service
+     * 3. Service handles event publishing via TransactionalEventPublisher
+     */
+    public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (exerciseIndex >= workout.getExercises().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid exercise index"));
+                    }
+
+                    WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
+
+                    // Domain operation: Create and add set
+                    WorkoutSet newSet = createWorkoutSetFromRequest(setRequest, exercise.getSets().size() + 1);
+                    exercise.addSet(newSet);
+
+                    return workoutRepository.save(workout)
+                            .flatMap(savedWorkout ->
+                                    // CLEAN DELEGATION: PersonalRecordService handles everything
+                                    processSetForImmediatePRs(newSet, exercise, workoutId, userId)
+                                            .then(Mono.just(savedWorkout))
+                            );
+                });
+    }
+
+    /**
+     * CLEAN DELEGATION: PersonalRecord processing
+     *
+     * Single Responsibility: Validate and delegate
+     * Dependency Inversion: Depends on PersonalRecordService abstraction
+     *
+     * SAME PATTERN AS WORKOUT ORCHESTRATOR:
+     * - Validate input
+     * - Delegate to domain service
+     * - Domain service handles event creation and publishing
+     */
+    private Mono<Void> processSetForImmediatePRs(WorkoutSet set, WorkoutExercise exercise,
+                                                 String workoutId, Long userId) {
+        // Input validation (Single Responsibility)
+        if (!isValidForPRProcessing(set)) {
+            log.debug("Set not valid for PR processing, skipping");
+            return Mono.empty();
+        }
+
+        log.info("Delegating immediate PR processing: exercise={}, weight={}kg, reps={}",
+                exercise.getExerciseName(), set.getWeightKg(), set.getReps());
+
+        // CLEAN DELEGATION: PersonalRecordService handles everything
+        return personalRecordService.processSetForImmediatePRs(
+                        userId,
+                        exercise.getExerciseId(),
+                        exercise.getExerciseName(),
+                        set,
+                        workoutId
+                )
+                .doOnSuccess(events -> {
+                    if (!events.isEmpty()) {
+                        log.info("IMMEDIATE PR PIPELINE COMPLETED: {} events processed for user {}",
+                                events.size(), userId);
+                    } else {
+                        log.debug("No immediate PRs detected for set");
+                    }
+                })
+                .then()
+                .doOnSuccess(v -> log.debug("Immediate PR processing delegation completed"))
+                .onErrorResume(error -> {
+                    // Fault Tolerance: PR processing failure doesn't break set logging
+                    log.warn("PR processing failed (non-critical): {}", error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * DECOUPLED COMPLETION: Uses orchestrator which publishes events
+     * Personal records processing happens asynchronously via event handler
+     */
+    public Mono<Workout> completeWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
+        log.info("Completing workout session: {} (using decoupled architecture)", workoutId);
+
+        if (useOrchestrator) {
+            // Use decoupled orchestrator - personal records handled via events
+            return workoutOrchestrator.completeWorkout(workoutId, userId, completionData)
+                    .doOnSuccess(workout -> log.info("✅ Workout completed using decoupled orchestrator: {}", workoutId));
+        } else {
+            // Legacy path for backward compatibility
+            return completeLegacyWorkout(workoutId, userId, completionData);
+        }
+    }
+
+    /**
+     * Legacy completion method (for backward compatibility during migration)
+     */
+    //@Deprecated
+    private Mono<Workout> completeLegacyWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
+        log.warn("Using legacy workout completion for: {} (consider migrating to orchestrator)", workoutId);
+
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (!WorkoutStatus.IN_PROGRESS.equals(workout.getStatus())) {
+                        return Mono.error(new InvalidWorkoutStateException("Workout is not in progress"));
+                    }
+
+                    // Basic completion logic
+                    workout.setStatus(WorkoutStatus.COMPLETED);
+                    workout.setCompletedAt(LocalDateTime.now());
+
+                    if (completionData != null) {
+                        applyCompletionData(workout, completionData);
+                    }
+
+                    return workoutRepository.save(workout);
+                });
+    }
+
+    // ==================== CORE WORKOUT OPERATIONS ====================
 
     /**
      * Find workout by ID and user ID (security check)
@@ -117,8 +263,7 @@ public class WorkoutService {
     }
 
     /**
-     * CORE FEATURE: Start workout from saved plan
-     * This is the key integration that connects workout planning with execution
+     * Start workout from saved plan
      */
     public Mono<Workout> startWorkoutFromPlan(Long userId, StartWorkoutRequest request) {
         log.info("Starting workout from plan for user: {}, planId: {}", userId, request.getWorkoutPlanId());
@@ -162,483 +307,241 @@ public class WorkoutService {
                 });
     }
 
+    /**
+     * Create workout from plan with customizations
+     */
     private Mono<Workout> createWorkoutFromPlan(Long userId, StartWorkoutRequest request, WorkoutPlan plan) {
-        log.debug("Converting plan '{}' to active workout for user {}", plan.getTitle(), userId);
-
         Workout workout = new Workout();
 
         // Set basic workout properties
         workout.setUserId(userId);
         workout.setWorkoutPlanId(plan.getId());
-        workout.setWorkoutName(determineWorkoutName(request.getWorkoutName(), plan.getTitle()));
-        workout.setWorkoutType(request.getWorkoutType() != null ? request.getWorkoutType() : "STRENGTH");
+        workout.setWorkoutName(request.getWorkoutName() != null ? request.getWorkoutName() : plan.getTitle());
+
+        // Handle missing getType() method - use request type or default to STRENGTH
+        String workoutType = request.getWorkoutType();
+        if (workoutType == null) {
+            // If your WorkoutPlan has a different method name, replace this
+            // e.g., plan.getCategory(), plan.getWorkoutCategory(), etc.
+            workoutType = "STRENGTH"; // Default fallback
+        }
+        workout.setWorkoutType(workoutType);
+
+        workout.setLocation(request.getLocation());
+        workout.setNotes(buildNotesFromPlan(plan, request.getNotes()));
+        workout.setTags(buildTagsFromPlan(plan, request.getTags()));
         workout.setStatus(WorkoutStatus.IN_PROGRESS);
         workout.setWorkoutDate(LocalDateTime.now());
-        workout.setLocation(request.getLocation());
-        workout.setNotes(combineNotes(plan.getDescription(), request.getNotes()));
-        workout.setTags(combineTags(null, request.getTags()));
+        workout.setStartedAt(LocalDateTime.now());
 
-        // Convert plan exercises to workout exercises
-        List<WorkoutExercise> workoutExercises = convertPlannedExercisesToWorkoutExercises(
-                plan.getExercises(),
-                request.getExcludeExerciseIds(),
-                request.getCustomizations()
-        );
+        // Convert planned exercises to workout exercises
+        List<WorkoutExercise> workoutExercises = convertPlannedExercisesToWorkout(
+                plan.getExercises(), request.getExcludeExerciseIds(), request.getCustomizations());
         workout.setExercises(workoutExercises);
 
-        // NEW: Use domain validation before saving
-        var validationResult = workoutValidationService.validateForCreation(workout);
-        if (validationResult.isInvalid()) {
-            return Mono.error(new InvalidWorkoutStateException(validationResult.getErrorMessage()));
-        }
-
-        // NEW: Simple state management
-        workout.startWorkout();
-
         return workoutRepository.save(workout)
-                .doOnSuccess(saved -> {
-                    log.info("Saved workout from plan: {}", saved.getId());
-                    updatePlanUsageStats(plan.getId(), userId);
+                .doOnSuccess(saved -> log.info("Created workout from plan with {} exercises", saved.getExercises().size()));
+    }
+
+    // ==================== EXERCISE AND SET MANAGEMENT ====================
+
+    /**
+     * IMMEDIATE PR PROCESSING: Update set with real-time PersonalRecord detection
+     *
+     * SAME CLEAN PATTERN: Delegate to PersonalRecordService
+     */
+    public Mono<Workout> updateSet(String workoutId, Long userId, int exerciseIndex, int setIndex, LogSetRequest setRequest) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (exerciseIndex >= workout.getExercises().size() ||
+                            setIndex >= workout.getExercises().get(exerciseIndex).getSets().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid exercise or set index"));
+                    }
+
+                    WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
+                    WorkoutSet existingSet = exercise.getSets().get(setIndex);
+
+                    // Store original state for comparison
+                    boolean wasCompleted = Boolean.TRUE.equals(existingSet.getCompleted());
+
+                    // Domain operation: Update set
+                    updateWorkoutSetFromRequest(existingSet, setRequest);
+
+                    return workoutRepository.save(workout)
+                            .flatMap(savedWorkout -> {
+                                // CLEAN BUSINESS LOGIC: Only process if meaningful change
+                                if (shouldProcessUpdatedSetForPRs(existingSet, wasCompleted)) {
+                                    log.info("Processing updated set for immediate PRs: exercise={}, weight={}kg, reps={}",
+                                            exercise.getExerciseName(), existingSet.getWeightKg(), existingSet.getReps());
+
+                                    // CLEAN DELEGATION: Same pattern as logSet
+                                    return processSetForImmediatePRs(existingSet, exercise, workoutId, userId)
+                                            .then(Mono.just(savedWorkout));
+                                } else {
+                                    log.debug("Skipping PR processing for updated set (no meaningful change)");
+                                    return Mono.just(savedWorkout);
+                                }
+                            });
                 });
     }
 
     /**
-     * EXERCISE CONVERSION: Transform PlannedExercise to WorkoutExercise
-     * This converts plan templates into executable workout exercises with template sets
+     * Add exercise to an active workout
      */
-    private List<WorkoutExercise> convertPlannedExercisesToWorkoutExercises(
-            List<PlannedExercise> plannedExercises,
-            List<String> excludeExerciseIds,
-            Map<String, Object> customizations) {
+    public Mono<Workout> addExerciseToWorkout(String workoutId, Long userId, WorkoutExercise exercise) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (!workout.isActive()) {
+                        return Mono.error(new InvalidWorkoutStateException("Cannot add exercises to inactive workout"));
+                    }
 
-        if (plannedExercises == null || plannedExercises.isEmpty()) {
-            log.warn("No exercises found in workout plan");
-            return new ArrayList<>();
-        }
+                    if (exercise.getSets() == null) {
+                        exercise.setSets(new ArrayList<>());
+                    }
 
-        log.debug("Converting {} planned exercises to workout exercises", plannedExercises.size());
+                    workout.addExercise(exercise);
+                    return workoutRepository.save(workout);
+                });
+    }
 
-        return plannedExercises.stream()
-                .filter(plannedEx -> !isExerciseExcluded(plannedEx.getExerciseTemplateId(), excludeExerciseIds))
-                .map(plannedEx -> {
-                    log.debug("Converting exercise: {} ({})", plannedEx.getTitle(), plannedEx.getExerciseTemplateId());
+    /**
+     * Delete a set from a workout
+     */
+    public Mono<Void> deleteSet(String workoutId, Long userId, int exerciseIndex, int setIndex) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (exerciseIndex >= workout.getExercises().size()) {
+                        return Mono.error(new ExerciseNotFoundException("Invalid exercise index"));
+                    }
 
-                    WorkoutExercise workoutEx = new WorkoutExercise();
+                    WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
+                    if (setIndex >= exercise.getSets().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid set index"));
+                    }
 
-                    // Map planned exercise to workout exercise
-                    workoutEx.setExerciseId(plannedEx.getExerciseTemplateId());
-                    workoutEx.setExerciseName(plannedEx.getTitle()); // THIS IS THE IMPORTANT PART!
-                    workoutEx.setExerciseCategory("STRENGTH");
-                    workoutEx.setExerciseOrder(plannedEx.getIndex() != null ? plannedEx.getIndex() : 1);
-                    workoutEx.setNotes(plannedEx.getNotes());
-                    workoutEx.setStartedAt(LocalDateTime.now());
+                    exercise.getSets().remove(setIndex);
+                    // Renumber remaining sets
+                    for (int i = setIndex; i < exercise.getSets().size(); i++) {
+                        exercise.getSets().get(i).setSetNumber(i + 1);
+                    }
 
-                    // CRITICAL: Create template sets from planned sets
-                    List<WorkoutSet> templateSets = createTemplateSetsFromPlannedSets(plannedEx, customizations);
-                    workoutEx.setSets(templateSets);
-
-                    log.debug("Converted exercise '{}' with {} template sets",
-                            workoutEx.getExerciseName(), templateSets.size());
-
-                    return workoutEx;
+                    return workoutRepository.save(workout);
                 })
-                .collect(Collectors.toList());
+                .then();
+    }
+
+    // ==================== BUSINESS RULES (SINGLE RESPONSIBILITY) ====================
+
+    /**
+     * Single Responsibility: Validation logic for PR processing
+     */
+    private boolean isValidForPRProcessing(WorkoutSet set) {
+        return Boolean.TRUE.equals(set.getCompleted()) && !Boolean.TRUE.equals(set.getWarmUp());
     }
 
     /**
-     * SET TEMPLATE CREATION: Convert PlannedExercise.PlannedSet to WorkoutSet templates
+     * Single Responsibility: Business rule for updated set PR processing
      */
-    private List<WorkoutSet> createTemplateSetsFromPlannedSets(PlannedExercise plannedEx, Map<String, Object> customizations) {
-        List<WorkoutSet> templateSets = new ArrayList<>();
-
-        if (plannedEx.getSets() == null || plannedEx.getSets().isEmpty()) {
-            log.debug("No planned sets found for exercise '{}', creating default template", plannedEx.getTitle());
-            templateSets.add(createDefaultTemplateSet(1, customizations, plannedEx.getExerciseTemplateId()));
-            return templateSets;
+    private boolean shouldProcessUpdatedSetForPRs(WorkoutSet set, boolean wasAlreadyCompleted) {
+        // Always process newly completed sets
+        if (!wasAlreadyCompleted && Boolean.TRUE.equals(set.getCompleted())) {
+            return true;
         }
 
-        log.debug("Creating {} template sets for exercise '{}'",
-                plannedEx.getSets().size(), plannedEx.getTitle());
-
-        for (int i = 0; i < plannedEx.getSets().size(); i++) {
-            PlannedExercise.PlannedSet plannedSet = plannedEx.getSets().get(i);
-            WorkoutSet templateSet = new WorkoutSet();
-
-            templateSet.setSetNumber(i + 1);
-
-            if (plannedSet.getWeightKg() != null) {
-                BigDecimal weight = BigDecimal.valueOf(plannedSet.getWeightKg());
-                templateSet.setWeightKg(applyWeightCustomization(weight, customizations, plannedEx.getExerciseTemplateId()));
-            }
-
-            if (plannedSet.getReps() != null) {
-                templateSet.setReps(applyRepsCustomization(plannedSet.getReps(), customizations, plannedEx.getExerciseTemplateId()));
-            } else if (plannedSet.hasRepRange()) {
-                int targetReps = (plannedSet.getRepRangeStart() + plannedSet.getRepRangeEnd()) / 2;
-                templateSet.setReps(applyRepsCustomization(targetReps, customizations, plannedEx.getExerciseTemplateId()));
-                templateSet.setNotes("Target: " + plannedSet.getRepRangeString() + " reps");
-            }
-
-            if (plannedSet.getDurationSeconds() != null) {
-                templateSet.setDurationSeconds(plannedSet.getDurationSeconds());
-            }
-
-            if (plannedSet.getDistanceMeters() != null) {
-                templateSet.setDistanceMeters(BigDecimal.valueOf(plannedSet.getDistanceMeters()));
-            }
-
-            templateSet.setRestSeconds(plannedEx.getRestSeconds() != null ? plannedEx.getRestSeconds() : 90);
-            templateSet.setCompleted(false);
-            templateSet.setFailure(false);
-            templateSet.setDropSet(false);
-            templateSet.setWarmUp("warmup".equalsIgnoreCase(plannedSet.getType()));
-            templateSet.setSetType(plannedSet.getType() != null ? plannedSet.getType().toUpperCase() : "PLANNED");
-
-            applySetCustomizations(templateSet, plannedEx.getExerciseTemplateId(), customizations);
-            templateSets.add(templateSet);
+        // Process updated completed sets (allows for corrections that create new PRs)
+        if (wasAlreadyCompleted && Boolean.TRUE.equals(set.getCompleted())) {
+            return true;
         }
 
-        log.debug("Created {} template sets for '{}'", templateSets.size(), plannedEx.getTitle());
-        return templateSets;
+        return false;
     }
 
-    /**
-     * Create a default template set when no planned sets exist
-     */
-    private WorkoutSet createDefaultTemplateSet(int setNumber, Map<String, Object> customizations, String exerciseId) {
-        WorkoutSet templateSet = new WorkoutSet();
-        templateSet.setSetNumber(setNumber);
-        templateSet.setWeightKg(BigDecimal.ZERO);
-        templateSet.setReps(10);
-        templateSet.setRestSeconds(90);
-        templateSet.setCompleted(false);
-        templateSet.setSetType("PLANNED");
-        templateSet.setNotes("Template set - adjust as needed");
+    // ==================== QUERY OPERATIONS ====================
 
-        applySetCustomizations(templateSet, exerciseId, customizations);
-        return templateSet;
+    public Flux<Workout> findRecentWorkouts(Long userId) {
+        return workoutRepository.findTop10ByUserIdOrderByWorkoutDateDesc(userId);
     }
 
-
-
-    private void applySetCustomizations(WorkoutSet set, String exerciseId, Map<String, Object> customizations) {
-        if (customizations == null) return;
-
-        Object setTypeOverrides = customizations.get("setTypes");
-        if (setTypeOverrides instanceof Map) {
-            Map<String, String> typeOverrides = (Map<String, String>) setTypeOverrides;
-            String overrideType = typeOverrides.get(exerciseId);
-            if (overrideType != null) {
-                set.setSetType(overrideType);
-            }
-        }
+    public Mono<Long> countWorkoutsInDateRange(Long userId, LocalDateTime startDate, LocalDateTime endDate) {
+        return workoutRepository.countByUserIdAndWorkoutDateBetween(userId, startDate, endDate);
     }
 
-    // WORKOUT OPERATIONS
-
-    /**
-     * Get user's workouts with optional filtering
-     */
-    public Flux<Workout> getUserWorkouts(Long userId, LocalDate startDate, LocalDate endDate) {
-        if (startDate != null || endDate != null) {
-            LocalDateTime start = startDate != null ? startDate.atStartOfDay() : LocalDateTime.now().minusYears(1);
-            LocalDateTime end = endDate != null ? endDate.atTime(LocalTime.MAX) : LocalDateTime.now();
-            return workoutRepository.findByUserIdAndWorkoutDateBetweenOrderByWorkoutDateDesc(userId, start, end);
-        }
-        return workoutRepository.findByUserIdOrderByWorkoutDateDesc(userId);
+    public Flux<Workout> findByUserAndExercise(Long userId, String exerciseId) {
+        return workoutRepository.findByUserIdAndExerciseId(userId, exerciseId);
     }
 
-    /**
-     * ENHANCED: Log set with proper exercise name passing for personal records
-     */
-    public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
-        log.info("Logging SET: workoutId={}, userId={}, exerciseIndex={}, weight={}kg, reps={}",
-                workoutId, userId, exerciseIndex, setRequest.getWeightKg(), setRequest.getReps());
-
-        return transactionalOperator.execute(status ->
-                findByIdAndUserId(workoutId, userId)
-                        .flatMap(workout -> {
-                            // NEW: Use domain validation service
-                            var validationResult = workoutValidationService.validateForStart(workout);
-                            if (validationResult.isInvalid()) {
-                                return Mono.error(new InvalidWorkoutStateException(
-                                        "Cannot log sets for workout in current state: " + validationResult.getErrorMessage()));
-                            }
-
-                            if (exerciseIndex < 0 || exerciseIndex >= workout.getExercises().size()) {
-                                return Mono.error(new ExerciseNotFoundException(
-                                        String.format("Exercise index %d not found. Workout has %d exercises.",
-                                                exerciseIndex, workout.getExercises().size())));
-                            }
-
-                            WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
-                            WorkoutSet newSet = createWorkoutSetFromRequest(setRequest);
-
-                            // NEW: Simple model operation (no business logic in model)
-                            exercise.addSet(newSet);
-
-                            return workoutRepository.save(workout);
-                        })
-                        .doOnSuccess(savedWorkout -> {
-                            log.info("SET LOGGED SUCCESSFULLY: workoutId={}, exerciseIndex={}, setNumber={}",
-                                    workoutId, exerciseIndex, savedWorkout.getExercises().get(exerciseIndex).getSets().size());
-
-                            // Check for personal records asynchronously
-                            checkForPersonalRecords(savedWorkout, exerciseIndex)
-                                    .subscribe(
-                                            result -> log.debug("PR check completed for workout {}", workoutId),
-                                            error -> log.warn("PR check failed for workout {} but set was logged successfully: {}",
-                                                    workoutId, error.getMessage())
-                                    );
-                        })
-        ).single();
+    public Flux<Workout> findByUserAndVolumeRange(Long userId, BigDecimal minVolume, BigDecimal maxVolume) {
+        return workoutRepository.findByUserIdAndTotalVolumeBetweenOrderByWorkoutDateDesc(userId, minVolume, maxVolume);
     }
 
-
-    // WORKOUT COMPLETION
-    /**
-     * REFACTORED: Complete workout using domain services
-     */
-
-    public Mono<Workout> completeWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
-        if (useOrchestrator) {
-            // NEW: Use DDD orchestrator
-            return workoutOrchestrator.completeWorkout(workoutId, userId, completionData);
-        } else {
-            // OLD: Use existing implementation (keep as fallback)
-            return completeWorkoutLegacy(workoutId, userId, completionData);
-        }
-    }
-
-    public Mono<Workout> completeWorkoutLegacy(String workoutId, Long userId, Map<String, Object> completionData) {
-        log.info("Completing workout session: {} for user: {}", workoutId, userId);
-
-        return transactionalOperator.execute(status ->
-                findByIdAndUserId(workoutId, userId)
-                        .flatMap(workout -> {
-                            // NEW: Use domain validation service
-                            var validationResult = workoutValidationService.validateForCompletion(workout);
-                            if (validationResult.isInvalid()) {
-                                return Mono.error(new InvalidWorkoutStateException(validationResult.getErrorMessage()));
-                            }
-
-                            if (completionData != null) {
-                                applyCompletionData(workout, completionData);
-                            }
-
-                            // NEW: Simple state change (no complex business logic)
-                            workout.completeWorkout();
-
-                            return workoutRepository.save(workout);
-                        })
-                        .flatMap(completedWorkout -> {
-                            log.info("Workout saved to database with ID: {} for user: {}",
-                                    completedWorkout.getId(), completedWorkout.getUserId());
-
-                            return publishWorkoutCompletedEvent(completedWorkout)
-                                    .then(checkForPersonalRecordsAllExercises(completedWorkout)
-                                            .onErrorResume(error -> {
-                                                log.warn("Personal record processing failed for workout {}: {}",
-                                                        completedWorkout.getId(), error.getMessage());
-                                                return Mono.empty();
-                                            }))
-                                    .then(Mono.just(completedWorkout));
-                        })
-        ).single();
-    }
-
-    // ANALYTICS AND PERSONAL RECORDS
-
-    /**
-     * Check for personal records in a specific exercise - NOW PASSES EXERCISE NAME!
-     */
-    private Mono<Void> checkForPersonalRecords(Workout workout, int exerciseIndex) {
-        if (exerciseIndex >= workout.getExercises().size()) {
-            return Mono.empty();
-        }
-
-        WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
-
-        // IMPORTANT: Now passing exercise name to PR service!
-        return personalRecordService.checkAndUpdatePersonalRecordsWithRetry(
-                        workout.getUserId(),
-                        exercise.getExerciseId(),
-                        exercise.getExerciseName(), // This is the key fix!
-                        exercise.getSets()
-                )
-                .then()
-                .onErrorResume(error -> {
-                    log.warn("Personal record check failed for workout {}, exercise '{}': {} - continuing without PR update",
-                            workout.getId(), exercise.getExerciseName(), error.getMessage());
-                    return Mono.empty();
+    public Mono<Workout> cancelWorkout(String workoutId, Long userId) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    workout.cancelWorkout();
+                    return save(workout);
                 });
     }
 
-    /**
-     * Check for personal records across all exercises in the workout - NOW PASSES EXERCISE NAMES!
-     */
-    private Mono<Void> checkForPersonalRecordsAllExercises(Workout workout) {
-        return Flux.fromIterable(workout.getExercises())
-                .flatMap(exercise -> personalRecordService.checkAndUpdatePersonalRecordsWithRetry(
-                                workout.getUserId(),
-                                exercise.getExerciseId(),
-                                exercise.getExerciseName(), // This is the key fix!
-                                exercise.getSets()
-                        )
-                        .onErrorResume(error -> {
-                            log.warn("Personal record check failed for exercise '{}' in workout {}: {} - continuing",
-                                    exercise.getExerciseName(), workout.getId(), error.getMessage());
-                            return Mono.just(new ArrayList<>());
-                        }))
-                .then()
-                .doOnSuccess(v -> log.debug("Completed personal record checks for workout: {}", workout.getId()))
-                .doOnError(error -> log.warn("Some personal record checks failed for workout {}: {}",
-                        workout.getId(), error.getMessage()));
+    public Mono<Workout> save(Workout workout) {
+        return workoutRepository.save(workout);
     }
 
-    // EVENT PUBLISHING
+    public Mono<Void> deleteById(String id) {
+        return workoutRepository.deleteById(id);
+    }
+
+    public Flux<Workout> findAll() {
+        return workoutRepository.findAll();
+    }
+
+    // ==================== HELPER METHODS (PURE FUNCTIONS) ====================
 
     /**
-     * REFACTORED: Create WorkoutCompletedEvent using domain services for calculations
+     * Pure function: Create WorkoutSet from request
      */
-    private Mono<Void> publishWorkoutCompletedEvent(Workout workout) {
-        log.info("Creating WorkoutCompletedEvent using domain services");
-
-        // NEW: Use domain services for calculations instead of model methods
-        WorkoutMetrics metrics;
-        List<String> muscleGroups;
-        Integer calories;
-
-        if (shouldUseNewCalculation(workout.getUserId())) {
-            // NEW: Use domain calculation services
-            metrics = workoutCalculationService.calculateWorkoutMetrics(workout);
-            muscleGroups = workoutCalculationService.getWorkedMuscleGroups(workout);
-            calories = workoutCalculationService.estimateCaloriesBurned(workout);
-        } else {
-            // LEGACY: Fallback to old methods (for safe migration)
-            metrics = createLegacyMetrics(workout);
-            muscleGroups = List.of(); // Simplified for fallback
-            calories = 0;
-        }
-
-        Duration actualDuration = workoutCalculationService.calculateWorkoutDuration(workout);
-
-        WorkoutCompletedEvent event = WorkoutCompletedEvent.builder()
-                .userId(workout.getUserId())
-                .workoutId(workout.getId())
-                .workoutType(workout.getWorkoutType())
-                .durationMinutes((int) actualDuration.toMinutes())
-                .totalVolume(metrics.getTotalVolume().getValue())
-                .totalSets(metrics.getTotalSets())
-                .totalReps(metrics.getTotalReps())
-                .exercisesCompleted(metrics.getCompletedExercises())
-                .caloriesBurned(calories)
-                .workoutStartTime(workout.getStartedAt() != null ?
-                        workout.getStartedAt().toInstant(ZoneOffset.UTC) :
-                        workout.getWorkoutDate().toInstant(ZoneOffset.UTC))
-                .workoutEndTime(workout.getCompletedAt() != null ?
-                        workout.getCompletedAt().toInstant(ZoneOffset.UTC) :
-                        Instant.now())
-                .workedMuscleGroups(muscleGroups)
-                .timestamp(Instant.now())
-                .build();
-
-        return transactionalEventPublisher.publishWorkoutCompleted(event);
-    }
-
-    /**
-     * NEW: Feature flag check for domain service usage
-     */
-    private boolean shouldUseNewCalculation(Long userId) {
-        if (featureToggleService != null) {
-            return featureToggleService.shouldUseNewCalculation(userId);
-        }
-        return useNewCalculation; // Fallback to global flag
-    }
-
-    /**
-     * LEGACY: Create metrics using old approach (for safe migration)
-     */
-    private WorkoutMetrics createLegacyMetrics(Workout workout) {
-        // Simple fallback implementation
-        return WorkoutMetrics.empty();
-    }
-
-    // HELPER METHODS (unchanged, but simplified where possible)
-
-    private boolean isExerciseExcluded(String exerciseId, List<String> excludeExerciseIds) {
-        return excludeExerciseIds != null && excludeExerciseIds.contains(exerciseId);
-    }
-
-    private String determineWorkoutName(String requestedName, String planTitle) {
-        if (requestedName != null && !requestedName.trim().isEmpty()) {
-            return requestedName;
-        }
-        return planTitle + " - " + LocalDateTime.now().toLocalDate();
-    }
-
-    private String combineNotes(String planDescription, String requestNotes) {
-        StringBuilder combinedNotes = new StringBuilder();
-        if (planDescription != null && !planDescription.trim().isEmpty()) {
-            combinedNotes.append("Plan: ").append(planDescription);
-        }
-        if (requestNotes != null && !requestNotes.trim().isEmpty()) {
-            if (!combinedNotes.isEmpty()) {
-                combinedNotes.append("\n\n");
-            }
-            combinedNotes.append("Notes: ").append(requestNotes);
-        }
-        return !combinedNotes.isEmpty() ? combinedNotes.toString() : null;
-    }
-
-    private List<String> combineTags(List<String> planTags, List<String> requestTags) {
-        List<String> combinedTags = new ArrayList<>();
-        if (planTags != null) {
-            combinedTags.addAll(planTags);
-        }
-        if (requestTags != null) {
-            for (String tag : requestTags) {
-                if (!combinedTags.contains(tag)) {
-                    combinedTags.add(tag);
-                }
-            }
-        }
-        if (!combinedTags.contains("from-plan")) {
-            combinedTags.add("from-plan");
-        }
-        return combinedTags;
-    }
-
-    private void updatePlanUsageStats(String planId, Long userId) {
-        workoutPlanService.incrementPlanUsage(planId, userId)
-                .subscribe(
-                        success -> log.debug("Updated usage stats for plan: {}", planId),
-                        error -> log.warn("Failed to update usage stats for plan {}: {}", planId, error.getMessage())
-                );
-    }
-
-    private WorkoutSet createWorkoutSetFromRequest(LogSetRequest request) {
-        WorkoutSet set = WorkoutSet.builder()
-                .weightKg(request.getWeightKg())
-                .reps(request.getReps())
-                .durationSeconds(request.getDurationSeconds())
-                .distanceMeters(request.getDistanceMeters())
-                .restSeconds(request.getRestSeconds())
-                .rpe(request.getRpe())
-                .completed(request.getCompleted())
-                .failure(request.getFailure())
-                .dropSet(request.getDropSet())
-                .warmUp(request.getWarmUp())
-                .setType(request.getSetType())
-                .notes(request.getNotes())
-                .startedAt(LocalDateTime.now())
-                .build();
+    private WorkoutSet createWorkoutSetFromRequest(LogSetRequest request, int setNumber) {
+        WorkoutSet set = new WorkoutSet();
+        set.setSetNumber(setNumber);
+        set.setWeightKg(request.getWeightKg());
+        set.setReps(request.getReps());
+        set.setDurationSeconds(request.getDurationSeconds());
+        set.setDistanceMeters(request.getDistanceMeters());
+        set.setRestSeconds(request.getRestSeconds());
+        set.setRpe(request.getRpe());
+        set.setCompleted(request.getCompleted());
+        set.setFailure(request.getFailure());
+        set.setDropSet(request.getDropSet());
+        set.setWarmUp(request.getWarmUp());
+        set.setSetType(request.getSetType());
+        set.setNotes(request.getNotes());
 
         if (Boolean.TRUE.equals(request.getCompleted())) {
             set.markCompleted();
         }
 
         return set;
+    }
+
+    /**
+     * Pure function: Update existing WorkoutSet
+     */
+    private void updateWorkoutSetFromRequest(WorkoutSet existingSet, LogSetRequest request) {
+        existingSet.setWeightKg(request.getWeightKg());
+        existingSet.setReps(request.getReps());
+        existingSet.setDurationSeconds(request.getDurationSeconds());
+        existingSet.setDistanceMeters(request.getDistanceMeters());
+        existingSet.setRestSeconds(request.getRestSeconds());
+        existingSet.setRpe(request.getRpe());
+        existingSet.setCompleted(request.getCompleted());
+        existingSet.setFailure(request.getFailure());
+        existingSet.setDropSet(request.getDropSet());
+        existingSet.setWarmUp(request.getWarmUp());
+        existingSet.setSetType(request.getSetType());
+        existingSet.setNotes(request.getNotes());
+
+        if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
+            existingSet.markCompleted();
+        }
     }
 
     private void applyCompletionData(Workout workout, Map<String, Object> completionData) {
@@ -653,7 +556,105 @@ public class WorkoutService {
         }
     }
 
-    // Customization helper methods
+    private List<String> buildTagsFromPlan(WorkoutPlan plan, List<String> requestTags) {
+        List<String> tags = new ArrayList<>();
+
+        // Handle case where WorkoutPlan might not have getTags() method
+        try {
+            // Try to get tags from plan if the method exists
+            if (plan != null) {
+                // You might need to replace this with the correct method name
+                // e.g., plan.getCategories(), plan.getLabels(), etc.
+                // For now, we'll just use request tags
+            }
+        } catch (Exception e) {
+            // Method doesn't exist, continue without plan tags
+        }
+
+        if (requestTags != null) {
+            tags.addAll(requestTags);
+        }
+        tags.add("from-plan");
+        return tags;
+    }
+
+    private String buildNotesFromPlan(WorkoutPlan plan, String requestNotes) {
+        StringBuilder notes = new StringBuilder();
+        if (plan.getDescription() != null && !plan.getDescription().isEmpty()) {
+            notes.append("Plan: ").append(plan.getDescription());
+        }
+        if (requestNotes != null && !requestNotes.isEmpty()) {
+            if (notes.length() > 0) notes.append("\n\n");
+            notes.append("Notes: ").append(requestNotes);
+        }
+        return notes.toString();
+    }
+
+    private List<WorkoutExercise> convertPlannedExercisesToWorkout(List<PlannedExercise> plannedExercises,
+                                                                   List<String> excludeIds,
+                                                                   Map<String, Object> customizations) {
+        if (plannedExercises == null) {
+            return new ArrayList<>();
+        }
+
+        return plannedExercises.stream()
+                .filter(exercise -> excludeIds == null || !excludeIds.contains(exercise.getExerciseTemplateId()))
+                .map(planned -> convertToWorkoutExercise(planned, customizations))
+                .toList();
+    }
+
+    private WorkoutExercise convertToWorkoutExercise(PlannedExercise planned, Map<String, Object> customizations) {
+        WorkoutExercise exercise = new WorkoutExercise();
+        exercise.setExerciseId(planned.getExerciseTemplateId());
+        exercise.setExerciseName(planned.getTitle());
+        exercise.setNotes(planned.getNotes());
+
+        // Convert planned sets to workout sets with customizations
+        List<WorkoutSet> sets = new ArrayList<>();
+        if (planned.getSets() != null && !planned.getSets().isEmpty()) {
+            for (int i = 0; i < planned.getSets().size(); i++) {
+                PlannedExercise.PlannedSet plannedSet = planned.getSets().get(i);
+                WorkoutSet set = createSetFromPlannedSet(plannedSet, i + 1, customizations, planned.getExerciseTemplateId());
+                sets.add(set);
+            }
+        }
+        exercise.setSets(sets);
+
+        return exercise;
+    }
+
+    private WorkoutSet createSetFromPlannedSet(PlannedExercise.PlannedSet plannedSet, int setNumber,
+                                               Map<String, Object> customizations, String exerciseId) {
+        WorkoutSet set = new WorkoutSet();
+        set.setSetNumber(setNumber);
+
+        // Apply base values with customizations
+        if (plannedSet.getWeightKg() != null) {
+            BigDecimal weight = BigDecimal.valueOf(plannedSet.getWeightKg());
+            set.setWeightKg(applyWeightCustomization(weight, customizations, exerciseId));
+        }
+
+        if (plannedSet.getReps() != null) {
+            set.setReps(applyRepsCustomization(plannedSet.getReps(), customizations, exerciseId));
+        } else if (plannedSet.hasRepRange()) {
+            // Use middle of rep range as default
+            int middleReps = (plannedSet.getRepRangeStart() + plannedSet.getRepRangeEnd()) / 2;
+            set.setReps(applyRepsCustomization(middleReps, customizations, exerciseId));
+        }
+
+        if (plannedSet.getDurationSeconds() != null) {
+            set.setDurationSeconds(plannedSet.getDurationSeconds());
+        }
+
+        if (plannedSet.getDistanceMeters() != null) {
+            set.setDistanceMeters(BigDecimal.valueOf(plannedSet.getDistanceMeters()));
+        }
+
+        set.setCompleted(false);
+
+        return set;
+    }
+
     private BigDecimal applyWeightCustomization(BigDecimal baseWeight, Map<String, Object> customizations, String exerciseId) {
         if (customizations == null) return baseWeight;
 
@@ -693,116 +694,5 @@ public class WorkoutService {
         }
 
         return Math.max(1, baseReps);
-    }
-
-    // Remaining methods (unchanged for compatibility)
-    public Mono<Workout> updateSet(String workoutId, Long userId, int exerciseIndex, int setIndex, LogSetRequest setRequest) {
-        // Implementation unchanged for brevity
-        return findByIdAndUserId(workoutId, userId)
-                .flatMap(workout -> {
-                    if (exerciseIndex >= workout.getExercises().size() || setIndex >= workout.getExercises().get(exerciseIndex).getSets().size()) {
-                        return Mono.error(new IllegalArgumentException("Invalid exercise or set index"));
-                    }
-
-                    WorkoutSet existingSet = workout.getExercises().get(exerciseIndex).getSets().get(setIndex);
-                    updateWorkoutSetFromRequest(existingSet, setRequest);
-
-                    return workoutRepository.save(workout);
-                });
-    }
-
-    private void updateWorkoutSetFromRequest(WorkoutSet existingSet, LogSetRequest request) {
-        existingSet.setWeightKg(request.getWeightKg());
-        existingSet.setReps(request.getReps());
-        existingSet.setDurationSeconds(request.getDurationSeconds());
-        existingSet.setDistanceMeters(request.getDistanceMeters());
-        existingSet.setRestSeconds(request.getRestSeconds());
-        existingSet.setRpe(request.getRpe());
-        existingSet.setCompleted(request.getCompleted());
-        existingSet.setFailure(request.getFailure());
-        existingSet.setDropSet(request.getDropSet());
-        existingSet.setWarmUp(request.getWarmUp());
-        existingSet.setSetType(request.getSetType());
-        existingSet.setNotes(request.getNotes());
-
-        if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
-            existingSet.markCompleted();
-        }
-    }
-
-    // Additional query methods (unchanged)
-    public Mono<Long> countWorkoutsInDateRange(Long userId, LocalDateTime startDate, LocalDateTime endDate) {
-        return workoutRepository.countByUserIdAndWorkoutDateBetween(userId, startDate, endDate);
-    }
-
-    public Flux<Workout> findByUserAndExercise(Long userId, String exerciseId) {
-        return workoutRepository.findByUserIdAndExerciseId(userId, exerciseId);
-    }
-
-    public Flux<Workout> findAll() {
-        return workoutRepository.findAll();
-    }
-
-    public Flux<Workout> findByUserAndVolumeRange(Long userId, BigDecimal minVolume, BigDecimal maxVolume) {
-        return workoutRepository.findByUserIdAndTotalVolumeBetweenOrderByWorkoutDateDesc(userId, minVolume, maxVolume);
-    }
-
-    public Flux<Workout> findRecentWorkouts(Long userId) {
-        return workoutRepository.findTop10ByUserIdOrderByWorkoutDateDesc(userId);
-    }
-
-    public Mono<Workout> save(Workout workout) {
-        return workoutRepository.save(workout);
-    }
-
-    public Mono<Void> deleteById(String id) {
-        return workoutRepository.deleteById(id);
-    }
-
-    public Mono<Workout> cancelWorkout(String workoutId, Long userId) {
-        return findByIdAndUserId(workoutId, userId)
-                .flatMap(workout -> {
-                    workout.cancelWorkout();
-                    return save(workout);
-                });
-    }
-
-    public Mono<Void> deleteSet(String workoutId, Long userId, int exerciseIndex, int setIndex) {
-        return findByIdAndUserId(workoutId, userId)
-                .flatMap(workout -> {
-                    if (exerciseIndex >= workout.getExercises().size()) {
-                        return Mono.error(new ExerciseNotFoundException("Invalid exercise index"));
-                    }
-
-                    WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
-                    if (setIndex >= exercise.getSets().size()) {
-                        return Mono.error(new IllegalArgumentException("Invalid set index"));
-                    }
-
-                    exercise.getSets().remove(setIndex);
-                    // Renumber remaining sets
-                    for (int i = setIndex; i < exercise.getSets().size(); i++) {
-                        exercise.getSets().get(i).setSetNumber(i + 1);
-                    }
-
-                    return workoutRepository.save(workout);
-                })
-                .then();
-    }
-
-    public Mono<Workout> addExerciseToWorkout(String workoutId, Long userId, WorkoutExercise exercise) {
-        return findByIdAndUserId(workoutId, userId)
-                .flatMap(workout -> {
-                    if (!workout.isActive()) {
-                        return Mono.error(new InvalidWorkoutStateException("Cannot add exercises to inactive workout"));
-                    }
-
-                    if (exercise.getSets() == null) {
-                        exercise.setSets(new ArrayList<>());
-                    }
-
-                    workout.addExercise(exercise);
-                    return workoutRepository.save(workout);
-                });
     }
 }

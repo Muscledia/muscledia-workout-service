@@ -25,68 +25,63 @@ public class AnalyticsCalculationService {
      * Calculate comprehensive workout analytics from workout data
      */
     public Mono<WorkoutAnalytics> calculateWorkoutAnalytics(Long userId, String period,
-            LocalDateTime periodStart, LocalDateTime periodEnd,
-            List<Workout> workouts) {
+                                                            LocalDateTime periodStart, LocalDateTime periodEnd,
+                                                            List<Workout> workouts) {
         log.info("Calculating analytics for {} workouts", workouts.size());
 
-        WorkoutAnalytics analytics = new WorkoutAnalytics();
-        analytics.setUserId(userId);
-        analytics.setAnalysisPeriod(period);
-        analytics.setPeriodStart(periodStart);
-        analytics.setPeriodEnd(periodEnd);
+        // Use builder pattern instead of new constructor
+        WorkoutAnalytics.WorkoutAnalyticsBuilder analyticsBuilder = WorkoutAnalytics.builder()
+                .userId(userId)
+                .analysisPeriod(period)
+                .periodStart(periodStart)
+                .periodEnd(periodEnd);
 
         // Basic workout statistics
-        calculateBasicStats(analytics, workouts, periodStart, periodEnd);
-
-        // Exercise-specific analytics
-        List<ExerciseAnalytics> exerciseAnalytics = calculateExerciseAnalytics(workouts, periodStart, periodEnd);
-        analytics.setExerciseAnalytics(exerciseAnalytics);
-
-        // Progress metrics
-        calculateProgressMetrics(analytics, workouts, exerciseAnalytics);
-
-        return Mono.just(analytics);
-    }
-
-    /**
-     * Calculate basic workout statistics
-     */
-    private void calculateBasicStats(WorkoutAnalytics analytics, List<Workout> workouts,
-            LocalDateTime periodStart, LocalDateTime periodEnd) {
-        analytics.setTotalWorkouts(workouts.size());
-
         if (workouts.isEmpty()) {
-            setZeroStats(analytics);
-            return;
+            return Mono.just(buildEmptyAnalytics(analyticsBuilder));
         }
 
-        // Duration statistics
+        // Calculate basic stats
         int totalDuration = workouts.stream()
                 .mapToInt(Workout::getDurationMinutes)
                 .sum();
-        analytics.setTotalDurationMinutes(totalDuration);
-        analytics.setAverageDurationMinutes((double) totalDuration / workouts.size());
 
-        // Volume statistics
         BigDecimal totalVolume = workouts.stream()
                 .map(Workout::getTotalVolume)
                 .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        analytics.setTotalVolume(totalVolume);
-        analytics.setAverageVolumePerWorkout(
-                totalVolume.divide(BigDecimal.valueOf(workouts.size()), 2, RoundingMode.HALF_UP));
 
-        // Frequency calculation
         long periodDays = ChronoUnit.DAYS.between(periodStart, periodEnd);
         double weeksInPeriod = periodDays / 7.0;
-        analytics.setWorkoutFrequencyPerWeek(workouts.size() / weeksInPeriod);
+
+        analyticsBuilder
+                .totalWorkouts(workouts.size())
+                .totalDurationMinutes(totalDuration)
+                .averageDurationMinutes((double) totalDuration / workouts.size())
+                .totalVolume(totalVolume)
+                .averageVolumePerWorkout(
+                        totalVolume.divide(BigDecimal.valueOf(workouts.size()), 2, RoundingMode.HALF_UP))
+                .workoutFrequencyPerWeek(workouts.size() / weeksInPeriod);
+
+        // Exercise-specific analytics
+        List<ExerciseAnalytics> exerciseAnalytics = calculateExerciseAnalytics(workouts, periodStart, periodEnd);
+        analyticsBuilder.exerciseAnalytics(exerciseAnalytics);
+
+        // Progress metrics
+        analyticsBuilder
+                .volumeTrend(calculateOverallVolumeTrend(workouts))
+                .volumeChangePercentage(calculateVolumeChangePercentage(workouts))
+                .strengthProgressionScore(calculateAverageProgressScore(exerciseAnalytics))
+                .newPRsCount(0); // Placeholder
+
+        return Mono.just(analyticsBuilder.build());
     }
 
     /**
      * Calculate exercise-specific analytics
      */
     private List<ExerciseAnalytics> calculateExerciseAnalytics(List<Workout> workouts,
-            LocalDateTime periodStart, LocalDateTime periodEnd) {
+                                                               LocalDateTime periodStart, LocalDateTime periodEnd) {
         // Group exercises by exercise ID
         Map<String, List<WorkoutExercise>> exerciseMap = new HashMap<>();
         Map<String, String> exerciseNames = new HashMap<>();
@@ -110,100 +105,66 @@ public class AnalyticsCalculationService {
     private ExerciseAnalytics calculateSingleExerciseAnalytics(String exerciseId, String exerciseName,
                                                                List<WorkoutExercise> exercises,
                                                                LocalDateTime periodStart, LocalDateTime periodEnd) {
-        ExerciseAnalytics analytics = new ExerciseAnalytics();
-        analytics.setExerciseId(exerciseId);
-        analytics.setExerciseName(exerciseName);
 
-        // Volume calculations - use the correct method
+        // Volume calculations
         BigDecimal totalVolume = exercises.stream()
-                .map(WorkoutExercise::getTotalVolume)  //Use existing method
+                .map(WorkoutExercise::getTotalVolume)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        analytics.setTotalVolume(totalVolume);
 
-        // Count unique sessions
-        int sessionsCount = exercises.size(); // Each WorkoutExercise represents one session
-        analytics.setSessionsCount(sessionsCount);
+        int sessionsCount = exercises.size();
 
-        if (sessionsCount > 0) {
-            analytics.setAverageVolumePerSession(
-                    totalVolume.divide(BigDecimal.valueOf(sessionsCount), 2, RoundingMode.HALF_UP));
-        }
-
-        // Weight statistics - use the correct method
+        // Weight statistics
         BigDecimal maxWeight = exercises.stream()
-                .map(WorkoutExercise::getMaxWeight)  // Use existing method
+                .map(WorkoutExercise::getMaxWeight)
                 .filter(Objects::nonNull)
                 .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
-        analytics.setMaxWeight(maxWeight);
 
-        // Average weight calculation
         BigDecimal avgWeight = exercises.stream()
-                .map(WorkoutExercise::getMaxWeight)  //Use existing method
+                .map(WorkoutExercise::getMaxWeight)
                 .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .divide(BigDecimal.valueOf(exercises.size()), 2, RoundingMode.HALF_UP);
-        analytics.setAverageWeight(avgWeight);
 
-        // 1RM estimation - use the heaviest set from each exercise
+        // 1RM estimation
         BigDecimal estimated1RM = exercises.stream()
                 .filter(exercise -> exercise.getSets() != null && !exercise.getSets().isEmpty())
-                .map(this::calculateExercise1RM)  // New helper method
+                .map(this::calculateExercise1RM)
                 .max(BigDecimal::compareTo)
                 .orElse(BigDecimal.ZERO);
-        analytics.setEstimated1RM(estimated1RM);
 
-        // Set and rep statistics - use correct methods
+        // Set and rep statistics
         int totalSets = exercises.stream()
-                .mapToInt(exercise -> exercise.getSets() != null ? exercise.getSets().size() : 0)  // Count sets
+                .mapToInt(exercise -> exercise.getSets() != null ? exercise.getSets().size() : 0)
                 .sum();
 
         int totalReps = exercises.stream()
-                .mapToInt(WorkoutExercise::getTotalReps)  // Use existing method
+                .mapToInt(WorkoutExercise::getTotalReps)
                 .sum();
-
-        analytics.setTotalSets(totalSets);
-        analytics.setTotalReps(totalReps);
-        analytics.setAverageSetsPerSession((double) totalSets / sessionsCount);
-
-        if (totalSets > 0) {
-            analytics.setAverageRepsPerSet((double) totalReps / totalSets);
-        }
 
         // Frequency calculation
         long periodDays = ChronoUnit.DAYS.between(periodStart, periodEnd);
         double weeksInPeriod = periodDays / 7.0;
-        analytics.setFrequencyPerWeek(sessionsCount / weeksInPeriod);
 
-        // Trends (simplified - would need historical data for proper calculation)
-        analytics.setVolumeTrend(calculateTrend(exercises, "VOLUME"));
-        analytics.setStrengthTrend(calculateTrend(exercises, "STRENGTH"));
-
-        // Progress score (0-100 based on improvement)
-        analytics.setProgressScore(calculateProgressScore(exercises));
-
-        return analytics;
-    }
-
-    /**
-     * Calculate progress metrics for overall analytics
-     */
-    private void calculateProgressMetrics(WorkoutAnalytics analytics, List<Workout> workouts,
-            List<ExerciseAnalytics> exerciseAnalytics) {
-        // Volume trend analysis
-        analytics.setVolumeTrend(calculateOverallVolumeTrend(workouts));
-        analytics.setVolumeChangePercentage(calculateVolumeChangePercentage(workouts));
-
-        // Strength progression score
-        double avgProgressScore = exerciseAnalytics.stream()
-                .mapToDouble(ExerciseAnalytics::getProgressScore)
-                .filter(score -> score > 0)
-                .average()
-                .orElse(0.0);
-        analytics.setStrengthProgressionScore(avgProgressScore);
-
-        // PR count (would be calculated from PersonalRecord service)
-        analytics.setNewPRsCount(0); // Placeholder
+        return ExerciseAnalytics.builder()
+                .exerciseId(exerciseId)
+                .exerciseName(exerciseName)
+                .totalVolume(totalVolume)
+                .sessionsCount(sessionsCount)
+                .averageVolumePerSession(
+                        sessionsCount > 0 ? totalVolume.divide(BigDecimal.valueOf(sessionsCount), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO)
+                .maxWeight(maxWeight)
+                .averageWeight(avgWeight)
+                .estimated1RM(estimated1RM)
+                .totalSets(totalSets)
+                .totalReps(totalReps)
+                .averageSetsPerSession((double) totalSets / sessionsCount)
+                .averageRepsPerSet(totalSets > 0 ? (double) totalReps / totalSets : 0.0)
+                .frequencyPerWeek(sessionsCount / weeksInPeriod)
+                .volumeTrend(calculateTrend(exercises, "VOLUME"))
+                .strengthTrend(calculateTrend(exercises, "STRENGTH"))
+                .progressScore(calculateProgressScore(exercises))
+                .build();
     }
 
     /**
@@ -249,20 +210,17 @@ public class AnalyticsCalculationService {
 
     // Helper methods
 
-    private void setZeroStats(WorkoutAnalytics analytics) {
-        analytics.setTotalDurationMinutes(0);
-        analytics.setAverageDurationMinutes(0.0);
-        analytics.setTotalVolume(BigDecimal.ZERO);
-        analytics.setAverageVolumePerWorkout(BigDecimal.ZERO);
-        analytics.setWorkoutFrequencyPerWeek(0.0);
-        analytics.setExerciseAnalytics(new ArrayList<>());
-    }
-
-    /**
-     * Calculate exercise volume using existing WorkoutExercise methods
-     */
-    private BigDecimal calculateExerciseVolume(WorkoutExercise exercise) {
-        return exercise.getTotalVolume();  // Use existing method
+    private WorkoutAnalytics buildEmptyAnalytics(WorkoutAnalytics.WorkoutAnalyticsBuilder builder) {
+        return builder
+                .totalWorkouts(0)
+                .totalDurationMinutes(0)
+                .averageDurationMinutes(0.0)
+                .totalVolume(BigDecimal.ZERO)
+                .averageVolumePerWorkout(BigDecimal.ZERO)
+                .workoutFrequencyPerWeek(0.0)
+                .exerciseAnalytics(new ArrayList<>())
+                .newPRsCount(0)
+                .build();
     }
 
     /**
@@ -273,7 +231,6 @@ public class AnalyticsCalculationService {
             return BigDecimal.ZERO;
         }
 
-        // Find the heaviest set and calculate 1RM
         return exercise.getSets().stream()
                 .filter(set -> set.getWeightKg() != null && set.getReps() != null && set.getReps() > 0)
                 .map(this::calculate1RMFromSet)
@@ -303,19 +260,13 @@ public class AnalyticsCalculationService {
     }
 
     private String calculateTrend(List<WorkoutExercise> exercises, String type) {
-        // Simplified trend calculation - would need proper time-series analysis
-        if (exercises.size() < 3)
-            return "INSUFFICIENT_DATA";
-
-        // For now, return a random trend - implement proper calculation
+        if (exercises.size() < 3) return "INSUFFICIENT_DATA";
         return "STABLE"; // Placeholder
     }
 
     private String calculateOverallVolumeTrend(List<Workout> workouts) {
-        if (workouts.size() < 2)
-            return "INSUFFICIENT_DATA";
+        if (workouts.size() < 2) return "INSUFFICIENT_DATA";
 
-        // Compare first half vs second half of period
         int midPoint = workouts.size() / 2;
         BigDecimal firstHalfVolume = workouts.subList(0, midPoint).stream()
                 .map(Workout::getTotalVolume)
@@ -337,12 +288,10 @@ public class AnalyticsCalculationService {
     }
 
     private Double calculateVolumeChangePercentage(List<Workout> workouts) {
-        if (workouts.size() < 2)
-            return 0.0;
+        if (workouts.size() < 2) return 0.0;
 
-        // Compare first vs last workout volumes
-        BigDecimal firstVolume = workouts.getLast().getTotalVolume();
-        BigDecimal lastVolume = workouts.getFirst().getTotalVolume();
+        BigDecimal firstVolume = workouts.get(0).getTotalVolume();
+        BigDecimal lastVolume = workouts.get(workouts.size() - 1).getTotalVolume();
 
         if (firstVolume == null || lastVolume == null || firstVolume.equals(BigDecimal.ZERO)) {
             return 0.0;
@@ -354,19 +303,20 @@ public class AnalyticsCalculationService {
                 .doubleValue();
     }
 
-    private Double calculateProgressScore(List<WorkoutExercise> exercises) {
-        // Simplified progress score calculation
-        if (exercises.size() < 3)
-            return 50.0; // Neutral score for insufficient data
+    private Double calculateAverageProgressScore(List<ExerciseAnalytics> exerciseAnalytics) {
+        return exerciseAnalytics.stream()
+                .mapToDouble(ExerciseAnalytics::getProgressScore)
+                .filter(score -> score > 0)
+                .average()
+                .orElse(0.0);
+    }
 
-        // Calculate based on weight progression, volume increase, etc.
-        // This is a placeholder - implement proper scoring algorithm
-        return 75.0;
+    private Double calculateProgressScore(List<WorkoutExercise> exercises) {
+        if (exercises.size() < 3) return 50.0;
+        return 75.0; // Placeholder
     }
 
     private String getExerciseName(String exerciseId) {
-        // This would typically fetch from Exercise repository
-        // Placeholder implementation
         return "Exercise " + exerciseId.substring(0, Math.min(8, exerciseId.length()));
     }
 }

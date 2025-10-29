@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.model.analytics;
 
+import lombok.Builder;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.CreatedDate;
@@ -13,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
+@Builder
 @Document(collection = "workout_analytics")
 public class WorkoutAnalytics {
 

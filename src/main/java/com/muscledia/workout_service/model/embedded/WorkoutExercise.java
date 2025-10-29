@@ -98,6 +98,22 @@ public class WorkoutExercise {
     @Schema(description = "Overall Rate of Perceived Exertion for this exercise (1-10)")
     private Integer overallRpe;
 
+    @Field("instructions")
+    @Size(max = 1000, message = "Instructions cannot exceed 1000 characters")
+    @Schema(description = "Exercise instructions or form notes")
+    private String instructions;
+
+    @Field("muscle_group")
+    @JsonProperty("muscleGroup")
+    @Schema(description = "Primary muscle group (alias for primaryMuscleGroup)")
+    private String muscleGroup;
+
+    @Field("target_muscles")
+    @JsonProperty("targetMuscles")
+    @Builder.Default
+    @Schema(description = "Target muscles (alias for secondaryMuscleGroups)")
+    private List<String> targetMuscles = new ArrayList<>();
+
     // BUSINESS METHODS
 
     /**
@@ -270,16 +286,6 @@ public class WorkoutExercise {
         return (double) completedSets / sets.size() * 100.0;
     }
 
-    /**
-     * Get secondary muscle groups for this exercise
-     */
-    public List<String> getSecondaryMuscleGroups() {
-        // Option 1: If you store this directly on WorkoutExercise
-        return this.secondaryMuscleGroups != null ? this.secondaryMuscleGroups : List.of();
-
-        // Option 2: If you need to look it up from Exercise service
-        // return exerciseService.findById(this.exerciseId).getSecondaryMuscleGroups();
-    }
 
     /**
      * Check if this exercise has been started (has at least one completed set)
@@ -361,6 +367,47 @@ public class WorkoutExercise {
                 }
             }
         }
+    }
+
+    /**
+     * Get target muscles (alias for secondaryMuscleGroups) - WorkoutService expects this
+     */
+    public List<String> getTargetMuscles() {
+        return this.secondaryMuscleGroups != null ? this.secondaryMuscleGroups : new ArrayList<>();
+    }
+
+    /**
+     * Set target muscles (alias for secondaryMuscleGroups)
+     */
+    public void setTargetMuscles(List<String> targetMuscles) {
+        this.secondaryMuscleGroups = targetMuscles;
+    }
+
+    /**
+     * Ensure consistency between primaryMuscleGroup and muscleGroup
+     */
+    public String getPrimaryMuscleGroup() {
+        return this.primaryMuscleGroup != null ? this.primaryMuscleGroup : this.muscleGroup;
+    }
+
+    public void setPrimaryMuscleGroup(String primaryMuscleGroup) {
+        this.primaryMuscleGroup = primaryMuscleGroup;
+        this.muscleGroup = primaryMuscleGroup; // Keep in sync
+    }
+
+    /**
+     * Ensure consistency between secondaryMuscleGroups and targetMuscles
+     */
+    public List<String> getSecondaryMuscleGroups() {
+        if (this.secondaryMuscleGroups != null && !this.secondaryMuscleGroups.isEmpty()) {
+            return this.secondaryMuscleGroups;
+        }
+        return this.targetMuscles != null ? this.targetMuscles : new ArrayList<>();
+    }
+
+    public void setSecondaryMuscleGroups(List<String> secondaryMuscleGroups) {
+        this.secondaryMuscleGroups = secondaryMuscleGroups;
+        this.targetMuscles = secondaryMuscleGroups; // Keep in sync
     }
 
 }

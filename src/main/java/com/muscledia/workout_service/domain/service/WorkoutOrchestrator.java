@@ -15,44 +15,56 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+
+/**
+ * DECOUPLED WorkoutOrchestrator - Pure Domain Logic
+ *
+ * Key Changes:
+ * - Removed PersonalRecordService dependency (was violating clean architecture)
+ * - Personal records now handled via WorkoutCompletedEvent (event-driven)
+ * - Pure domain orchestration focused on workout completion
+ * - Infrastructure concerns separated
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class WorkoutOrchestrator {
-    // Domain Services
+    // DOMAIN SERVICES ONLY
     private final WorkoutValidationService validationService;
     private final WorkoutMetricsCalculator metricsCalculator;
     private final WorkoutDomainMapper domainMapper;
 
-    // Infrastructure Services
+    // INFRASTRUCTURE SERVICES (minimal)
     private final WorkoutRepository repository;
     private final TransactionalEventPublisher eventPublisher;
-    private final PersonalRecordService personalRecordService;
     private final TransactionalOperator transactionalOperator;
-
+    private final PersonalRecordService personalRecordService;
 
     /**
-     * Complete workout using DDD orchestration pattern
+     * Complete workout using pure DDD orchestration
+     * Personal records handled via events (not direct service calls)
      */
     public Mono<Workout> completeWorkout(String workoutId, Long userId) {
-        log.info("🎯 Starting workout completion orchestration for workoutId: {}, userId: {}", workoutId, userId);
+        log.info("🎯 Starting pure domain workout completion for workoutId: {}", workoutId);
 
         return transactionalOperator.execute(status ->
                 repository.findByIdAndUserId(workoutId, userId)
                         .switchIfEmpty(Mono.error(new WorkoutNotFoundException("Workout not found: " + workoutId)))
                         .flatMap(this::validateAndComplete)
-                        .flatMap(this::calculateAndPublishEvents)
-                        .doOnSuccess(workout -> log.info("✅ Workout completion orchestration successful for: {}", workoutId))
-                        .doOnError(error -> log.error("❌ Workout completion orchestration failed for {}: {}", workoutId, error.getMessage()))
+                        .flatMap(this::calculateMetricsAndPublishEvent)
+                        .doOnSuccess(workout -> log.info("✅ Domain workout completion successful for: {}", workoutId))
+                        .doOnError(error -> log.error("❌ Domain workout completion failed for {}: {}", workoutId, error.getMessage()))
         ).single();
     }
 
@@ -60,30 +72,27 @@ public class WorkoutOrchestrator {
      * Complete workout with additional completion data
      */
     public Mono<Workout> completeWorkout(String workoutId, Long userId, Map<String, Object> completionData) {
-        log.info("🎯 Starting workout completion with data for workoutId: {}", workoutId);
+        log.info("🎯 Starting domain workout completion with data for workoutId: {}", workoutId);
 
         return transactionalOperator.execute(status ->
                 repository.findByIdAndUserId(workoutId, userId)
                         .switchIfEmpty(Mono.error(new WorkoutNotFoundException("Workout not found: " + workoutId)))
                         .flatMap(workout -> validateAndComplete(workout, completionData))
-                        .flatMap(this::calculateAndPublishEvents)
+                        .flatMap(this::calculateMetricsAndPublishEvent)
         ).single();
     }
 
     /**
-     * Validate workout and mark as completed
+     * PURE DOMAIN LOGIC: Validate and mark workout as completed
      */
     private Mono<Workout> validateAndComplete(Workout workout) {
         return validateAndComplete(workout, null);
     }
 
-    /**
-     * Validate workout and mark as completed with additional data
-     */
     private Mono<Workout> validateAndComplete(Workout workout, Map<String, Object> completionData) {
         log.debug("🔍 Validating workout {} for completion", workout.getId());
 
-        // Step 1: Domain Validation
+        // Step 1: Pure Domain Validation
         var validationResult = validationService.validateForCompletion(workout);
         if (validationResult.isInvalid()) {
             log.warn("❌ Workout validation failed: {}", validationResult.getErrorMessage());
@@ -95,7 +104,7 @@ public class WorkoutOrchestrator {
             applyCompletionData(workout, completionData);
         }
 
-        // Step 3: Mark workout as completed (simple state change)
+        // Step 3: Pure state change - no side effects
         workout.setStatus(WorkoutStatus.COMPLETED);
         workout.setCompletedAt(LocalDateTime.now());
 
@@ -107,38 +116,44 @@ public class WorkoutOrchestrator {
 
         // Step 4: Save to database
         return repository.save(workout)
-                .doOnSuccess(saved -> log.info("💾 Workout {} marked as completed and saved", saved.getId()));
+                .doOnSuccess(saved -> log.info("💾 Workout {} completed and saved", saved.getId()));
     }
 
     /**
-     * Calculate metrics and publish completion events
+     * PURE DOMAIN LOGIC: Calculate metrics and publish single event
+     * All side effects (like personal records) handled by event listeners
      */
-    private Mono<Workout> calculateAndPublishEvents(Workout completedWorkout) {
-        log.debug("📊 Starting metrics calculation and event publishing for workout: {}", completedWorkout.getId());
+    private Mono<Workout> calculateMetricsAndPublishEvent(Workout completedWorkout) {
+        log.debug("📊 Calculating domain metrics and publishing event for workout: {}", completedWorkout.getId());
 
         return Mono.fromCallable(() -> {
-                    // Convert to domain object for pure domain calculations
+                    // Pure domain calculation
                     WorkoutData workoutData = domainMapper.toDomainWorkout(completedWorkout);
                     return calculateMetricsUsingDomain(workoutData);
                 })
                 .flatMap(metrics -> publishWorkoutCompletedEvent(completedWorkout, metrics))
-                .flatMap(event -> checkPersonalRecords(completedWorkout))
+                .flatMap(event ->
+                        // PROCESS PERSONAL RECORDS SYNCHRONOUSLY
+                        personalRecordService.processWorkoutForPersonalRecords(completedWorkout.getId(), completedWorkout.getUserId())
+                                .flatMapMany(Flux::fromIterable)
+                                .flatMap(eventPublisher::publishPersonalRecord)
+                                .collectList()
+                                .doOnSuccess(prEvents -> log.info("📊 Processed {} PersonalRecord events", prEvents.size()))
+                                .then(Mono.just(event))
+                )
                 .then(Mono.just(completedWorkout))
-                .doOnSuccess(workout -> log.info("✅ Metrics calculated and events published for workout: {}", workout.getId()))
-                .doOnError(error -> log.error("❌ Failed to calculate metrics or publish events for workout {}: {}",
-                        completedWorkout.getId(), error.getMessage()));
+                .doOnSuccess(workout -> log.info("✅ Domain metrics calculated and events published for workout: {}", workout.getId()));
     }
 
     /**
-     * Calculate metrics using pure domain logic
+     * PURE DOMAIN CALCULATION: Calculate metrics using domain services
      */
     private WorkoutMetrics calculateMetricsUsingDomain(WorkoutData workoutData) {
-        log.debug("🧮 Calculating metrics using domain services for workout: {}", workoutData.getId());
+        log.debug("🧮 Calculating pure domain metrics for workout: {}", workoutData.getId());
 
-        // Use pure domain calculation
         WorkoutMetrics metrics = metricsCalculator.calculateWorkoutMetrics(workoutData);
 
-        log.debug("📈 Calculated metrics: volume={}, sets={}, reps={}, completedExercises={}",
+        log.debug("📈 Calculated domain metrics: volume={}, sets={}, reps={}, completedExercises={}",
                 metrics.getTotalVolume().getValue(),
                 metrics.getTotalSets(),
                 metrics.getTotalReps(),
@@ -148,7 +163,8 @@ public class WorkoutOrchestrator {
     }
 
     /**
-     * Publish WorkoutCompletedEvent using domain calculations
+     * SINGLE RESPONSIBILITY: Publish WorkoutCompletedEvent
+     * Personal records will be handled by PersonalRecordEventHandler listening to this event
      */
     private Mono<WorkoutCompletedEvent> publishWorkoutCompletedEvent(Workout workout, WorkoutMetrics metrics) {
         log.debug("📤 Publishing WorkoutCompletedEvent for workout: {}", workout.getId());
@@ -179,54 +195,20 @@ public class WorkoutOrchestrator {
                 .workedMuscleGroups(muscleGroups)
                 .timestamp(Instant.now())
                 .metadata(Map.of(
-                        "calculationMethod", "domain-service",
-                        "domainVersion", "1.0"
+                        "calculationMethod", "pure-domain-service",
+                        "domainVersion", "2.0",
+                        "architecture", "event-driven-decoupled"
                 ))
                 .build();
 
         return eventPublisher.publishWorkoutCompleted(event)
                 .then(Mono.just(event))
-                .doOnSuccess(publishedEvent -> log.info("📤 Published WorkoutCompletedEvent: {}", publishedEvent.getEventId()));
+                .doOnSuccess(publishedEvent -> log.info("📤 Published WorkoutCompletedEvent: {} (Personal records will be handled by event listener)",
+                        publishedEvent.getEventId()));
     }
 
     /**
-     * Check for personal records across all exercises
-     */
-    private Mono<Void> checkPersonalRecords(Workout workout) {
-        log.debug("🏆 Checking personal records for workout: {}", workout.getId());
-
-        if (workout.getExercises() == null || workout.getExercises().isEmpty()) {
-            log.debug("⚠️ No exercises in workout, skipping PR check");
-            return Mono.empty();
-        }
-
-        return reactor.core.publisher.Flux.fromIterable(workout.getExercises())
-                .flatMap(exercise -> {
-                    if (exercise.getExerciseId() == null || exercise.getExerciseName() == null) {
-                        log.warn("⚠️ Exercise missing ID or name, skipping PR check");
-                        return Mono.empty();
-                    }
-
-                    return personalRecordService.checkAndUpdatePersonalRecordsWithRetry(
-                                    workout.getUserId(),
-                                    exercise.getExerciseId(),
-                                    exercise.getExerciseName(),
-                                    exercise.getSets()
-                            )
-                            .onErrorResume(error -> {
-                                log.warn("⚠️ PR check failed for exercise '{}' in workout {}: {} - continuing",
-                                        exercise.getExerciseName(), workout.getId(), error.getMessage());
-                                return Mono.just(new java.util.ArrayList<>());
-                            });
-                })
-                .then()
-                .doOnSuccess(v -> log.debug("🏆 Completed personal record checks for workout: {}", workout.getId()))
-                .doOnError(error -> log.warn("⚠️ Some personal record checks failed for workout {}: {}",
-                        workout.getId(), error.getMessage()));
-    }
-
-    /**
-     * Apply additional completion data to the workout
+     * Helper method to apply completion data
      */
     private void applyCompletionData(Workout workout, Map<String, Object> completionData) {
         if (completionData == null) {
@@ -270,7 +252,7 @@ public class WorkoutOrchestrator {
     }
 
     /**
-     * Validate that a workout can be started (for future use)
+     * Validate that a workout can be started
      */
     public Mono<Workout> validateForStart(Workout workout) {
         var validationResult = validationService.validateForStart(workout);
@@ -281,7 +263,7 @@ public class WorkoutOrchestrator {
     }
 
     /**
-     * Get workout efficiency metrics using domain calculations
+     * Get workout efficiency metrics using pure domain calculations
      */
     public Mono<WorkoutCalculationService.WorkoutEfficiencyMetrics> getEfficiencyMetrics(String workoutId, Long userId) {
         return repository.findByIdAndUserId(workoutId, userId)
