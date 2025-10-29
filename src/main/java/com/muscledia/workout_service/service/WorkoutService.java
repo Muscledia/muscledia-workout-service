@@ -1,6 +1,5 @@
 package com.muscledia.workout_service.service;
 
-import com.muscledia.workout_service.domain.service.WorkoutCalculationService;
 import com.muscledia.workout_service.domain.service.WorkoutOrchestrator;
 import com.muscledia.workout_service.domain.service.WorkoutValidationService;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
@@ -15,11 +14,11 @@ import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutSet;
 import com.muscledia.workout_service.model.enums.WorkoutStatus;
 import com.muscledia.workout_service.repository.WorkoutRepository;
+import com.muscledia.workout_service.service.analytics.PersonalRecordService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -30,24 +29,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * DECOUPLED WorkoutService - Clean Architecture
+ * CLEAN ARCHITECTURE WorkoutService
+ * Following the same pattern as WorkoutOrchestrator for PersonalRecord events
  *
- * Key Changes:
- * - REMOVED PersonalRecordService dependency (was creating coupling)
- * - Personal records now handled via WorkoutCompletedEvent (event-driven)
- * - Clear separation between workout management and analytics
- * - Focused on core workout business logic only
- *
- * Responsibilities:
- * - Workout session management (start, update, complete)
- * - Workout plan integration
- * - Exercise and set management
- * - Query operations
- *
- * NOT responsible for:
- * - Personal record processing (handled by event listener)
- * - Analytics calculations (handled by domain services)
- * - Complex business rules (delegated to orchestrator)
+ * SOLID Principles:
+ * - Single Responsibility: Set logging + PR detection delegation
+ * - Open/Closed: Easy to extend with new PR features
+ * - Liskov Substitution: PersonalRecordService abstraction
+ * - Interface Segregation: Clean separation of concerns
+ * - Dependency Inversion: Depends on PersonalRecordService abstraction
  */
 @Service
 @RequiredArgsConstructor
@@ -55,14 +45,12 @@ import java.util.Map;
 public class WorkoutService {
     // Core dependencies
     private final WorkoutRepository workoutRepository;
-    private final TransactionalOperator transactionalOperator;
     private final WorkoutPlanService workoutPlanService;
+    private final PersonalRecordService personalRecordService;
 
     // Domain Services for business logic
     private final WorkoutOrchestrator workoutOrchestrator;
-    private final WorkoutCalculationService workoutCalculationService;
     private final WorkoutValidationService workoutValidationService;
-    private final FeatureToggleService featureToggleService;
 
     // Feature flags for migration
     @Value("${workout.use-new-calculation:true}")
@@ -123,7 +111,7 @@ public class WorkoutService {
 
 
     /**
-     * Get user workouts with date filtering - MISSING METHOD ADDED
+     * Get user workouts with date filtering
      */
     public Flux<Workout> getUserWorkouts(Long userId, LocalDateTime startDate, LocalDateTime endDate) {
         if (startDate != null && endDate != null) {
@@ -145,7 +133,12 @@ public class WorkoutService {
     }
 
     /**
-     * Log a set for a specific exercise - MISSING METHOD ADDED
+     * IMMEDIATE PR PROCESSING: Log set with real-time PersonalRecord detection
+     *
+     * SAME PATTERN AS WORKOUT COMPLETION:
+     * 1. Perform domain operation (save set)
+     * 2. Delegate event creation to service
+     * 3. Service handles event publishing via TransactionalEventPublisher
      */
     public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
@@ -156,11 +149,63 @@ public class WorkoutService {
 
                     WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
 
-                    // Create new set from request
+                    // Domain operation: Create and add set
                     WorkoutSet newSet = createWorkoutSetFromRequest(setRequest, exercise.getSets().size() + 1);
                     exercise.addSet(newSet);
 
-                    return workoutRepository.save(workout);
+                    return workoutRepository.save(workout)
+                            .flatMap(savedWorkout ->
+                                    // CLEAN DELEGATION: PersonalRecordService handles everything
+                                    processSetForImmediatePRs(newSet, exercise, workoutId, userId)
+                                            .then(Mono.just(savedWorkout))
+                            );
+                });
+    }
+
+    /**
+     * CLEAN DELEGATION: PersonalRecord processing
+     *
+     * Single Responsibility: Validate and delegate
+     * Dependency Inversion: Depends on PersonalRecordService abstraction
+     *
+     * SAME PATTERN AS WORKOUT ORCHESTRATOR:
+     * - Validate input
+     * - Delegate to domain service
+     * - Domain service handles event creation and publishing
+     */
+    private Mono<Void> processSetForImmediatePRs(WorkoutSet set, WorkoutExercise exercise,
+                                                 String workoutId, Long userId) {
+        // Input validation (Single Responsibility)
+        if (!isValidForPRProcessing(set)) {
+            log.debug("Set not valid for PR processing, skipping");
+            return Mono.empty();
+        }
+
+        log.info("Delegating immediate PR processing: exercise={}, weight={}kg, reps={}",
+                exercise.getExerciseName(), set.getWeightKg(), set.getReps());
+
+        // CLEAN DELEGATION: PersonalRecordService handles everything
+        return personalRecordService.processSetForImmediatePRs(
+                        userId,
+                        exercise.getExerciseId(),
+                        exercise.getExerciseName(),
+                        set,
+                        workoutId
+                )
+                .doOnSuccess(events -> {
+                    if (!events.isEmpty()) {
+                        log.info("IMMEDIATE PR PIPELINE COMPLETED: {} events processed for user {}",
+                                events.size(), userId);
+                    } else {
+                        log.debug("No immediate PRs detected for set");
+                    }
+                })
+                .then()
+                .doOnSuccess(v -> log.debug("Immediate PR processing delegation completed"))
+                .onErrorResume(error -> {
+                    // Fault Tolerance: PR processing failure doesn't break set logging
+                    log.warn("PR processing failed (non-critical): {}", error.getMessage());
+                    return Mono.empty();
                 });
     }
 
@@ -301,7 +346,9 @@ public class WorkoutService {
     // ==================== EXERCISE AND SET MANAGEMENT ====================
 
     /**
-     * Update a specific set in a workout
+     * IMMEDIATE PR PROCESSING: Update set with real-time PersonalRecord detection
+     *
+     * SAME CLEAN PATTERN: Delegate to PersonalRecordService
      */
     public Mono<Workout> updateSet(String workoutId, Long userId, int exerciseIndex, int setIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
@@ -311,10 +358,30 @@ public class WorkoutService {
                         return Mono.error(new IllegalArgumentException("Invalid exercise or set index"));
                     }
 
-                    WorkoutSet existingSet = workout.getExercises().get(exerciseIndex).getSets().get(setIndex);
+                    WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
+                    WorkoutSet existingSet = exercise.getSets().get(setIndex);
+
+                    // Store original state for comparison
+                    boolean wasCompleted = Boolean.TRUE.equals(existingSet.getCompleted());
+
+                    // Domain operation: Update set
                     updateWorkoutSetFromRequest(existingSet, setRequest);
 
-                    return workoutRepository.save(workout);
+                    return workoutRepository.save(workout)
+                            .flatMap(savedWorkout -> {
+                                // CLEAN BUSINESS LOGIC: Only process if meaningful change
+                                if (shouldProcessUpdatedSetForPRs(existingSet, wasCompleted)) {
+                                    log.info("Processing updated set for immediate PRs: exercise={}, weight={}kg, reps={}",
+                                            exercise.getExerciseName(), existingSet.getWeightKg(), existingSet.getReps());
+
+                                    // CLEAN DELEGATION: Same pattern as logSet
+                                    return processSetForImmediatePRs(existingSet, exercise, workoutId, userId)
+                                            .then(Mono.just(savedWorkout));
+                                } else {
+                                    log.debug("Skipping PR processing for updated set (no meaningful change)");
+                                    return Mono.just(savedWorkout);
+                                }
+                            });
                 });
     }
 
@@ -363,6 +430,32 @@ public class WorkoutService {
                 .then();
     }
 
+    // ==================== BUSINESS RULES (SINGLE RESPONSIBILITY) ====================
+
+    /**
+     * Single Responsibility: Validation logic for PR processing
+     */
+    private boolean isValidForPRProcessing(WorkoutSet set) {
+        return Boolean.TRUE.equals(set.getCompleted()) && !Boolean.TRUE.equals(set.getWarmUp());
+    }
+
+    /**
+     * Single Responsibility: Business rule for updated set PR processing
+     */
+    private boolean shouldProcessUpdatedSetForPRs(WorkoutSet set, boolean wasAlreadyCompleted) {
+        // Always process newly completed sets
+        if (!wasAlreadyCompleted && Boolean.TRUE.equals(set.getCompleted())) {
+            return true;
+        }
+
+        // Process updated completed sets (allows for corrections that create new PRs)
+        if (wasAlreadyCompleted && Boolean.TRUE.equals(set.getCompleted())) {
+            return true;
+        }
+
+        return false;
+    }
+
     // ==================== QUERY OPERATIONS ====================
 
     public Flux<Workout> findRecentWorkouts(Long userId) {
@@ -401,30 +494,10 @@ public class WorkoutService {
         return workoutRepository.findAll();
     }
 
-    // ==================== HELPER METHODS ====================
-
-    private void updateWorkoutSetFromRequest(WorkoutSet existingSet, LogSetRequest request) {
-        existingSet.setWeightKg(request.getWeightKg());
-        existingSet.setReps(request.getReps());
-        existingSet.setDurationSeconds(request.getDurationSeconds());
-        existingSet.setDistanceMeters(request.getDistanceMeters());
-        existingSet.setRestSeconds(request.getRestSeconds());
-        existingSet.setRpe(request.getRpe());
-        existingSet.setCompleted(request.getCompleted());
-        existingSet.setFailure(request.getFailure());
-        existingSet.setDropSet(request.getDropSet());
-        existingSet.setWarmUp(request.getWarmUp());
-        existingSet.setSetType(request.getSetType());
-        existingSet.setNotes(request.getNotes());
-
-        if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
-            existingSet.markCompleted();
-        }
-    }
-
+    // ==================== HELPER METHODS (PURE FUNCTIONS) ====================
 
     /**
-     * Create a new WorkoutSet from LogSetRequest - MISSING HELPER METHOD ADDED
+     * Pure function: Create WorkoutSet from request
      */
     private WorkoutSet createWorkoutSetFromRequest(LogSetRequest request, int setNumber) {
         WorkoutSet set = new WorkoutSet();
@@ -447,6 +520,28 @@ public class WorkoutService {
         }
 
         return set;
+    }
+
+    /**
+     * Pure function: Update existing WorkoutSet
+     */
+    private void updateWorkoutSetFromRequest(WorkoutSet existingSet, LogSetRequest request) {
+        existingSet.setWeightKg(request.getWeightKg());
+        existingSet.setReps(request.getReps());
+        existingSet.setDurationSeconds(request.getDurationSeconds());
+        existingSet.setDistanceMeters(request.getDistanceMeters());
+        existingSet.setRestSeconds(request.getRestSeconds());
+        existingSet.setRpe(request.getRpe());
+        existingSet.setCompleted(request.getCompleted());
+        existingSet.setFailure(request.getFailure());
+        existingSet.setDropSet(request.getDropSet());
+        existingSet.setWarmUp(request.getWarmUp());
+        existingSet.setSetType(request.getSetType());
+        existingSet.setNotes(request.getNotes());
+
+        if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
+            existingSet.markCompleted();
+        }
     }
 
     private void applyCompletionData(Workout workout, Map<String, Object> completionData) {
