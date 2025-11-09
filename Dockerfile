@@ -8,7 +8,7 @@ RUN mvn dependency:go-offline -B
 COPY src ./src
 RUN mvn clean package -DskipTests
 
-FROM openjdk:21-jdk-slim
+FROM eclipse-temurin:21-jdk-jammy
 
 RUN groupadd -r muscledia && useradd -r -g muscledia muscledia
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
