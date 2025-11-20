@@ -104,6 +104,27 @@ public class WorkoutValidationService {
     }
 
     /**
+     * Validate workout for set operations (logging, updating, deleting sets)
+     */
+    public ValidationResult validateForSetOperations(Workout workout) {
+        List<String> errors = new ArrayList<>();
+
+        if (workout == null) {
+            errors.add("Workout cannot be null");
+            return ValidationResult.invalid(errors);
+        }
+
+        if (workout.getStatus() != WorkoutStatus.IN_PROGRESS) {
+            errors.add(String.format(
+                    "Set operations can only be performed on IN_PROGRESS workout sessions. Current status: %s",
+                    workout.getStatus()
+            ));
+        }
+
+        return errors.isEmpty() ? ValidationResult.valid() : ValidationResult.invalid(errors);
+    }
+
+    /**
      * Check if workout can be modified
      */
     public ValidationResult validateForModification(Workout workout) {
