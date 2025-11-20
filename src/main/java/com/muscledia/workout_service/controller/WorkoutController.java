@@ -341,20 +341,22 @@ public class WorkoutController {
     @PostMapping("/{workoutId}/exercises/{exerciseIndex}/sets")
     @ResponseStatus(HttpStatus.CREATED)
     @Operation(
-            summary = "Log a new set for an exercise - CORE USER STORY IMPLEMENTATION",
+            summary = "Log a new set for an exercise - REQUIRES IN_PROGRESS STATUS",
             description = """
-            Record the actual weight, reps, and duration for each set performed.
-            This is the core implementation of the "Log Exercise Sets" user story.
-            Creates a WorkoutSet object with precise performance data (e.g., 50kg, 10 reps).
-            """,
+        Record the actual weight, reps, and duration for each set performed.
+        
+        IMPORTANT: Workout must be in IN_PROGRESS status. Operations on PLANNED, 
+        COMPLETED, or CANCELLED workouts will return 400 Bad Request.
+        
+        This is the core implementation of the "Log Exercise Sets" user story.
+        Creates a WorkoutSet object with precise performance data (e.g., 50kg, 10 reps).
+        """,
             security = @SecurityRequirement(name = "bearer-key")
     )
     @ApiResponses(value = {
-            @ApiResponse(responseCode = "201", description = "Set logged successfully - WorkoutSet object created with correct values",
-                    content = @Content(mediaType = "application/json",
-                            schema = @Schema(implementation = WorkoutResponse.class))),
+            @ApiResponse(responseCode = "201", description = "Set logged successfully - WorkoutSet object created with correct values"),
+            @ApiResponse(responseCode = "400", description = "Invalid workout state - must be IN_PROGRESS, or invalid set data"),
             @ApiResponse(responseCode = "404", description = "Workout or exercise not found"),
-            @ApiResponse(responseCode = "400", description = "Invalid set data or workout not active"),
             @ApiResponse(responseCode = "403", description = "Access denied - not your workout")
     })
     public Mono<WorkoutResponse> logSet(
