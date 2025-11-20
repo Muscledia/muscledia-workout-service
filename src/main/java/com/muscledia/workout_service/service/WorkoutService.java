@@ -134,15 +134,23 @@ public class WorkoutService {
 
     /**
      * IMMEDIATE PR PROCESSING: Log set with real-time PersonalRecord detection
-     *
-     * SAME PATTERN AS WORKOUT COMPLETION:
-     * 1. Perform domain operation (save set)
-     * 2. Delegate event creation to service
-     * 3. Service handles event publishing via TransactionalEventPublisher
+     * ENHANCED: Now validates workout status before allowing set operations
      */
     public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
                 .flatMap(workout -> {
+                    // VALIDATE WORKOUT STATUS FIRST
+                    var validationResult = workoutValidationService.validateForSetOperations(workout);
+                    if (validationResult.isInvalid()) {
+                        log.warn("Set logging denied for workout {} with status {}",
+                                workoutId, workout.getStatus());
+                        return Mono.error(new InvalidWorkoutStateException(
+                                validationResult.getErrorMessage(),
+                                workout.getStatus().toString(),
+                                WorkoutStatus.IN_PROGRESS.toString()
+                        ));
+                    }
+
                     if (exerciseIndex >= workout.getExercises().size()) {
                         return Mono.error(new IllegalArgumentException("Invalid exercise index"));
                     }
@@ -155,7 +163,6 @@ public class WorkoutService {
 
                     return workoutRepository.save(workout)
                             .flatMap(savedWorkout ->
-                                    // CLEAN DELEGATION: PersonalRecordService handles everything
                                     processSetForImmediatePRs(newSet, exercise, workoutId, userId)
                                             .then(Mono.just(savedWorkout))
                             );
@@ -353,6 +360,19 @@ public class WorkoutService {
     public Mono<Workout> updateSet(String workoutId, Long userId, int exerciseIndex, int setIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
                 .flatMap(workout -> {
+
+                    // VALIDATE WORKOUT STATUS FIRST
+                    var validationResult = workoutValidationService.validateForSetOperations(workout);
+                    if (validationResult.isInvalid()) {
+                        log.warn("Set update denied for workout {} with status {}",
+                                workoutId, workout.getStatus());
+                        return Mono.error(new InvalidWorkoutStateException(
+                                validationResult.getErrorMessage(),
+                                workout.getStatus().toString(),
+                                WorkoutStatus.IN_PROGRESS.toString()
+                        ));
+                    }
+
                     if (exerciseIndex >= workout.getExercises().size() ||
                             setIndex >= workout.getExercises().get(exerciseIndex).getSets().size()) {
                         return Mono.error(new IllegalArgumentException("Invalid exercise or set index"));
@@ -406,10 +426,24 @@ public class WorkoutService {
 
     /**
      * Delete a set from a workout
+     * ENHANCED: Now validates workout status before allowing set deletion
      */
     public Mono<Void> deleteSet(String workoutId, Long userId, int exerciseIndex, int setIndex) {
         return findByIdAndUserId(workoutId, userId)
                 .flatMap(workout -> {
+
+                    // VALIDATE WORKOUT STATUS FIRST
+                    var validationResult = workoutValidationService.validateForSetOperations(workout);
+                    if (validationResult.isInvalid()) {
+                        log.warn("Set deletion denied for workout {} with status {}",
+                                workoutId, workout.getStatus());
+                        return Mono.error(new InvalidWorkoutStateException(
+                                validationResult.getErrorMessage(),
+                                workout.getStatus().toString(),
+                                WorkoutStatus.IN_PROGRESS.toString()
+                        ));
+                    }
+
                     if (exerciseIndex >= workout.getExercises().size()) {
                         return Mono.error(new ExerciseNotFoundException("Invalid exercise index"));
                     }
