@@ -5,7 +5,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ResponseStatus;
 
 /**
- * Exception thrown when trying to perform an operation on a workout in an invalid state
+ * Exception thrown when attempting operations on a workout session
+ * that is not in the correct state.
+ *
+ * This exception is thrown when:
+ * - Attempting to log sets on a workout that is not IN_PROGRESS
+ * - Attempting to update sets on a completed workout
+ * - Any operation requiring active workout session status
  */
 @Getter
 @ResponseStatus(HttpStatus.BAD_REQUEST)
