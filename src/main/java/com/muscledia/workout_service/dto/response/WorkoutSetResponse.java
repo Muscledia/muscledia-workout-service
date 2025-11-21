@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.muscledia.workout_service.model.enums.SetType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -39,16 +40,9 @@ public class WorkoutSetResponse {
     private Integer rpe;
 
     private Boolean completed;
-    private Boolean failure;
-
-    @JsonProperty("dropSet")
-    private Boolean dropSet;
-
-    @JsonProperty("warmUp")
-    private Boolean warmUp;
 
     @JsonProperty("setType")
-    private String setType;
+    private SetType setType;
 
     private String notes;
 

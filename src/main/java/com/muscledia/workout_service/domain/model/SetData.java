@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.domain.model;
 
 import com.muscledia.workout_service.domain.vo.Volume;
+import com.muscledia.workout_service.model.enums.SetType;
 import lombok.Value;
 
 import java.math.BigDecimal;
@@ -16,23 +17,33 @@ public class SetData {
     Integer restSeconds;
     Integer rpe;
     boolean completed;
-    boolean failure;
-    boolean warmUp;
-    String setType;
+    SetType setType;
     LocalDateTime completedAt;
 
     /**
      * Calculate volume using domain value object
+     * BUSINESS RULE: Only working sets count toward volume
      */
     public Volume getVolume() {
+        if (!setType.countsTowardVolume()) {
+            return Volume.zero();
+        }
         return Volume.of(weight, reps != null ? reps : 0);
     }
 
     /**
      * Check if this is a working set
+     * FIXED: Uses SetType enum instead of warmUp boolean
      */
     public boolean isWorkingSet() {
-        return !warmUp;
+        return setType.isWorkingSet();
+    }
+
+    /**
+     * Check if this counts toward personal records
+     */
+    public boolean countsTowardPersonalRecords() {
+        return setType.countsTowardPersonalRecords() && completed;
     }
 
     /**
