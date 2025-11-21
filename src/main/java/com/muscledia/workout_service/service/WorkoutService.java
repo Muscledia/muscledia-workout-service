@@ -468,9 +468,10 @@ public class WorkoutService {
 
     /**
      * Single Responsibility: Validation logic for PR processing
+     * FIXED: Uses enum-based setType instead of deprecated getWarmUp()
      */
     private boolean isValidForPRProcessing(WorkoutSet set) {
-        return Boolean.TRUE.equals(set.getCompleted()) && !Boolean.TRUE.equals(set.getWarmUp());
+        return Boolean.TRUE.equals(set.getCompleted()) && set.countsTowardPersonalRecords();
     }
 
     /**
@@ -531,7 +532,7 @@ public class WorkoutService {
     // ==================== HELPER METHODS (PURE FUNCTIONS) ====================
 
     /**
-     * Pure function: Create WorkoutSet from request
+     * Pure function: Create WorkoutSet from request with set type classification
      */
     private WorkoutSet createWorkoutSetFromRequest(LogSetRequest request, int setNumber) {
         WorkoutSet set = new WorkoutSet();
@@ -543,10 +544,7 @@ public class WorkoutService {
         set.setRestSeconds(request.getRestSeconds());
         set.setRpe(request.getRpe());
         set.setCompleted(request.getCompleted());
-        set.setFailure(request.getFailure());
-        set.setDropSet(request.getDropSet());
-        set.setWarmUp(request.getWarmUp());
-        set.setSetType(request.getSetType());
+        set.setSetType(request.getSetType()); // Direct assignment, no sync needed
         set.setNotes(request.getNotes());
 
         if (Boolean.TRUE.equals(request.getCompleted())) {
@@ -567,10 +565,7 @@ public class WorkoutService {
         existingSet.setRestSeconds(request.getRestSeconds());
         existingSet.setRpe(request.getRpe());
         existingSet.setCompleted(request.getCompleted());
-        existingSet.setFailure(request.getFailure());
-        existingSet.setDropSet(request.getDropSet());
-        existingSet.setWarmUp(request.getWarmUp());
-        existingSet.setSetType(request.getSetType());
+        existingSet.setSetType(request.getSetType()); // Direct assignment, no sync needed
         existingSet.setNotes(request.getNotes());
 
         if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
