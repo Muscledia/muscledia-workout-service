@@ -633,7 +633,7 @@ public class WorkoutController {
     }
 
     /**
-     * FIXED: Calculate volume instead of calling non-existent getVolume method
+     * FIXED: Uses SetType enum instead of deprecated booleans
      */
     private WorkoutSetResponse convertSetToResponse(WorkoutSet set) {
         BigDecimal volume = calculateSetVolume(set);
@@ -647,10 +647,7 @@ public class WorkoutController {
                 .restSeconds(set.getRestSeconds())
                 .rpe(set.getRpe())
                 .completed(set.getCompleted())
-                .failure(set.getFailure())
-                .dropSet(set.getDropSet())
-                .warmUp(set.getWarmUp())
-                .setType(set.getSetType())
+                .setType(set.getSetType())  // Only use enum
                 .notes(set.getNotes())
                 .startedAt(set.getStartedAt() != null ? set.getStartedAt().toString() : null)
                 .completedAt(set.getCompletedAt() != null ? set.getCompletedAt().toString() : null)
