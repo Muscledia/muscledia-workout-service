@@ -4,6 +4,7 @@ import com.muscledia.workout_service.domain.vo.SetPerformance;
 import com.muscledia.workout_service.domain.vo.Volume;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
 import com.muscledia.workout_service.model.embedded.WorkoutSet;
+import com.muscledia.workout_service.model.enums.SetType;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -121,7 +122,7 @@ public class ExercisePerformanceService {
                 .filter(set -> Boolean.TRUE.equals(set.getCompleted()))
                 .count();
         int failedSets = (int) exercise.getSets().stream()
-                .filter(set -> Boolean.TRUE.equals(set.getFailure()))
+                .filter(set -> set.getSetType() == SetType.FAILURE)
                 .count();
 
         return new ExerciseCompletionStats(totalSets, completedSets, failedSets);

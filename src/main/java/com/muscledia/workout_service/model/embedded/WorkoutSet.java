@@ -2,6 +2,7 @@ package com.muscledia.workout_service.model.embedded;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.muscledia.workout_service.model.enums.SetType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -64,32 +65,18 @@ public class WorkoutSet {
     @Max(value = 10, message = "RPE cannot exceed 10")
     private Integer rpe;
 
-    // SET CHARACTERISTICS
-    @Schema(description = "Whether this set was completed successfully", example = "true")
-    @Builder.Default
-    private Boolean completed = true;
-
-    @Schema(description = "Whether this set was a failure (couldn't complete planned reps)", example = "false")
-    @Builder.Default
-    private Boolean failure = false;
-
-    @Schema(description = "Whether this set was a drop set", example = "false")
-    @Builder.Default
-    @Field("drop_set")
-    @JsonProperty("dropSet")
-    private Boolean dropSet = false;
-
-    @Schema(description = "Whether this set was a warm-up set", example = "false")
-    @Builder.Default
-    @Field("warm_up")
-    @JsonProperty("warmUp")
-    private Boolean warmUp = false;
-
-    @Schema(description = "Set type", example = "WORKING", allowableValues = {"WARM_UP", "WORKING", "DROP", "CLUSTER", "REST_PAUSE"})
+    // SET CHARACTERISTICS - CLEAN ENUM ONLY
+    @Schema(description = "Set type classification for accurate intensity tracking",
+            example = "NORMAL",
+            allowableValues = {"NORMAL", "WARMUP", "FAILURE", "DROP"})
     @Builder.Default
     @Field("set_type")
     @JsonProperty("setType")
-    private String setType = "WORKING";
+    private SetType setType = SetType.NORMAL;
+
+    @Schema(description = "Whether this set was completed successfully", example = "true")
+    @Builder.Default
+    private Boolean completed = true;
 
     // TIMING
     @Schema(description = "When the set was started")
@@ -113,12 +100,31 @@ public class WorkoutSet {
 
     /**
      * Calculate volume for this set (weight × reps)
+     * BUSINESS RULE: Only counts volume for working sets (excludes warmup)
      */
     public BigDecimal getVolume() {
+        if (!setType.countsTowardVolume()) {
+            return BigDecimal.ZERO;
+        }
+
         if (weightKg != null && reps != null && reps > 0) {
             return weightKg.multiply(BigDecimal.valueOf(reps));
         }
         return BigDecimal.ZERO;
+    }
+
+    /**
+     * Check if this set counts toward personal records
+     */
+    public boolean countsTowardPersonalRecords() {
+        return setType.countsTowardPersonalRecords() && Boolean.TRUE.equals(completed);
+    }
+
+    /**
+     * Check if this is a working set (not warmup)
+     */
+    public boolean isWorkingSet() {
+        return setType.isWorkingSet();
     }
 
     /**

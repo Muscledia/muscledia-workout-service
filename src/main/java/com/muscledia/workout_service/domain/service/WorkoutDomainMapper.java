@@ -109,9 +109,7 @@ public class WorkoutDomainMapper {
                 set.getRestSeconds(),
                 set.getRpe(),
                 Boolean.TRUE.equals(set.getCompleted()),
-                Boolean.TRUE.equals(set.getFailure()),
-                Boolean.TRUE.equals(set.getWarmUp()),
-                set.getSetType(),
+                set.getSetType(),  // Use enum directly
                 set.getCompletedAt()
         );
     }
@@ -264,8 +262,6 @@ public class WorkoutDomainMapper {
                 .restSeconds(setData.getRestSeconds())
                 .rpe(setData.getRpe())
                 .completed(setData.isCompleted())
-                .failure(setData.isFailure())
-                .warmUp(setData.isWarmUp())
                 .setType(setData.getSetType())
                 .completedAt(setData.getCompletedAt())
                 .build();

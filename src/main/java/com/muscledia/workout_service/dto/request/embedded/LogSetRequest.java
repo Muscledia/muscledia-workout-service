@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.dto.request.embedded;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.muscledia.workout_service.model.enums.SetType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -54,30 +55,17 @@ public class LogSetRequest {
     @Max(value = 10, message = "RPE cannot exceed 10")
     private Integer rpe;
 
-    // SET STATUS AND TYPE
+    // SET STATUS AND TYPE - CLEAN ENUM ONLY
+    @Schema(description = "Set type classification",
+            example = "NORMAL",
+            allowableValues = {"NORMAL", "WARMUP", "FAILURE", "DROP"})
+    @Builder.Default
+    @JsonProperty("setType")
+    private SetType setType = SetType.NORMAL;
+
     @Schema(description = "Whether this set was completed successfully", example = "true")
     @Builder.Default
     private Boolean completed = true;
-
-    @Schema(description = "Whether this set was a failure (couldn't complete planned reps)", example = "false")
-    @Builder.Default
-    private Boolean failure = false;
-
-    @Schema(description = "Whether this set was a drop set", example = "false")
-    @Builder.Default
-    @JsonProperty("dropSet")
-    private Boolean dropSet = false;
-
-    @Schema(description = "Whether this set was a warm-up set", example = "false")
-    @Builder.Default
-    @JsonProperty("warmUp")
-    private Boolean warmUp = false;
-
-    @Schema(description = "Type of set", example = "WORKING",
-            allowableValues = {"WARM_UP", "WORKING", "DROP", "CLUSTER", "REST_PAUSE"})
-    @Builder.Default
-    @JsonProperty("setType")
-    private String setType = "WORKING";
 
     // ADDITIONAL CONTEXT
     @Schema(description = "Additional notes for this set", example = "Felt heavy today")

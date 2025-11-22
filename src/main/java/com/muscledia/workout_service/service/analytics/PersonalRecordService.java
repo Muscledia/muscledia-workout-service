@@ -276,7 +276,7 @@ public class PersonalRecordService implements IPersonalRecordService {
     // ==================== VALIDATION HELPERS ====================
 
     private boolean shouldProcessSetForPRs(WorkoutSet set) {
-        return Boolean.TRUE.equals(set.getCompleted()) && !Boolean.TRUE.equals(set.getWarmUp());
+        return Boolean.TRUE.equals(set.getCompleted()) && set.countsTowardPersonalRecords();
     }
 
     private boolean shouldCheckWeightPR(WorkoutSet set) {

@@ -2,6 +2,7 @@ package com.muscledia.workout_service.model.embedded;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.muscledia.workout_service.model.enums.SetType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -255,7 +256,7 @@ public class WorkoutExercise {
 
         return (int) sets.stream()
                 .filter(set -> Boolean.TRUE.equals(set.getCompleted()) &&
-                        !Boolean.TRUE.equals(set.getFailure()))
+                        set.getSetType() == SetType.FAILURE)
                 .count();
     }
 
