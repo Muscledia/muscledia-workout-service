@@ -23,6 +23,8 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/v1/routine-folders")
 @RequiredArgsConstructor
@@ -40,13 +42,15 @@ public class RoutineFolderController {
                         @ApiResponse(responseCode = "200", description = "Public routine folder found", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RoutineFolder.class))),
                         @ApiResponse(responseCode = "404", description = "Public routine folder not found")
         })
-        public Mono<ResponseEntity<RoutineFolder>> getPublicRoutineFolder(
-                        @Parameter(description = "Routine folder ID", example = "507f1f77bcf86cd799439011") @PathVariable String id) {
-                return routineFolderService.findById(id)
-                                .filter(RoutineFolder::getIsPublic) // Only return if public
-                                .map(ResponseEntity::ok)
-                                .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
-                                .doOnSuccess(response -> log.debug("Retrieved public routine folder with id: {}", id));
+        public Mono<ResponseEntity<Map<String, Object>>> getPublicRoutineFolder(
+                @Parameter(description = "Routine folder ID", example = "507f1f77bcf86cd799439011")
+                @PathVariable String id) {
+
+                return routineFolderService.findByIdWithWorkoutPlans(id)
+                        .filter(response -> Boolean.TRUE.equals(response.get("isPublic")))
+                        .map(ResponseEntity::ok)
+                        .switchIfEmpty(Mono.just(ResponseEntity.notFound().build()))
+                        .doOnSuccess(response -> log.debug("Retrieved public routine folder: {}", id));
         }
 
         @GetMapping("/public")
@@ -162,9 +166,14 @@ public class RoutineFolderController {
                         @ApiResponse(responseCode = "200", description = "Personal routine folders retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = RoutineFolder.class)))),
                         @ApiResponse(responseCode = "401", description = "Authentication required")
         })
-        public Flux<RoutineFolder> getPersonalRoutineFolders() {
+        public Flux<Map<String, Object>> getPersonalRoutineFolders(
+                @RequestParam(required = false, defaultValue = "true") boolean includeWorkoutPlans) {
+
                 return authenticationService.getCurrentUserId()
-                                .flatMapMany(routineFolderService::findPersonalRoutineFolders);
+                        .flatMapMany(userId -> routineFolderService.findPersonalRoutineFolders(userId)
+                                .flatMap(folder ->
+                                        routineFolderService.findByIdWithWorkoutPlans(folder.getId())
+                                ));
         }
 
         @PostMapping("/personal")
