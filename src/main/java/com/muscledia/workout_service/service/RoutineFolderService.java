@@ -13,7 +13,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -133,6 +135,29 @@ public class RoutineFolderService {
                 .filter(folder -> Boolean.TRUE.equals(folder.getIsPublic()))
                 .switchIfEmpty(Mono.error(new IllegalArgumentException("The specified routine folder is not public.")))
                 .doOnNext(folder -> log.debug("Folder '{}' is confirmed as public", folder.getTitle()));
+    }
+
+
+    /**
+     * Find routine folder by ID with optional workout plans
+     * ALWAYS returns Map for consistency - workoutPlans field is empty list if not requested
+     */
+    public Mono<Map<String, Object>> findByIdWithWorkoutPlans(String id) {
+        return findById(id)
+                .flatMap(folder -> {
+                    if (folder.getWorkoutPlanIds() == null || folder.getWorkoutPlanIds().isEmpty()) {
+                        return Mono.just(createFolderResponse(folder, List.of()));
+                    }
+
+                    return Flux.fromIterable(folder.getWorkoutPlanIds())
+                            .flatMap(planId -> workoutPlanRepository.findById(planId)
+                                    .onErrorResume(error -> {
+                                        log.warn("Skipping missing plan {}: {}", planId, error.getMessage());
+                                        return Mono.empty();
+                                    }))
+                            .collectList()
+                            .map(plans -> createFolderResponse(folder, plans));
+                });
     }
 
     /**
@@ -483,6 +508,32 @@ public class RoutineFolderService {
     /**
      * Helper methods for additional functionality
      */
+
+
+    /**
+     * Helper to create response map with folder + workout plans
+     */
+    public Map<String, Object> createFolderResponse(RoutineFolder folder, List<WorkoutPlan> workoutPlans) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("id", folder.getId());
+        response.put("hevyId", folder.getHevyId());
+        response.put("folderIndex", folder.getFolderIndex());
+        response.put("title", folder.getTitle());
+        response.put("difficultyLevel", folder.getDifficultyLevel());
+        response.put("equipmentType", folder.getEquipmentType());
+        response.put("workoutSplit", folder.getWorkoutSplit());
+        response.put("isPublic", folder.getIsPublic());
+        response.put("createdBy", folder.getCreatedBy());
+        response.put("usageCount", folder.getUsageCount());
+        response.put("createdAt", folder.getCreatedAt());
+        response.put("updatedAt", folder.getUpdatedAt());
+        response.put("workoutPlanIds", folder.getWorkoutPlanIds());
+        response.put("workoutPlans", workoutPlans);  // Empty list or populated
+        response.put("workoutPlanCount", workoutPlans.size());
+        response.put("personal", Boolean.FALSE.equals(folder.getIsPublic()));
+
+        return response;
+    }
 
     public Mono<Void> delete(RoutineFolder routineFolder) {
         return routineFolderRepository.delete(routineFolder);
