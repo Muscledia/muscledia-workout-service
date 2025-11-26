@@ -58,4 +58,30 @@ public interface ExerciseRepository extends ReactiveMongoRepository<Exercise, St
     // Complex search with multiple criteria
     @Query("{'difficulty': ?0, '$or': [{'targetMuscle': ?1}, {'muscleGroups.name': ?1}]}")
     Flux<Exercise> findByDifficultyAndMuscleInvolved(ExerciseDifficulty difficulty, String muscle);
+
+    // ==================== NEW METHODS FOR WORKOUT PLAN CREATION ====================
+
+    /**
+     * Find exercises by muscle group (checks both primary and secondary muscle groups)
+     * and equipment with pagination
+     */
+    @Query("{ 'muscleGroups.name': ?0, 'equipment': ?1 }")
+    Flux<Exercise> findByMuscleGroupAndEquipment(String muscleGroup, String equipment, Pageable pageable);
+
+    /**
+     * Find exercises by muscle group with pagination
+     * Checks both primary and secondary muscle groups
+     */
+    @Query("{ 'muscleGroups.name': ?0 }")
+    Flux<Exercise> findByMuscleGroupPaginated(String muscleGroup, Pageable pageable);
+
+    /**
+     * Find exercises by equipment with pagination
+     */
+    Flux<Exercise> findByEquipment(String equipment, Pageable pageable);
+
+    /**
+     * Find all exercises with pagination (for browsing)
+     */
+    Flux<Exercise> findAllBy(Pageable pageable);
 }
