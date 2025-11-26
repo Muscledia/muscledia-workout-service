@@ -150,4 +150,68 @@ public class ExerciseService {
         return exerciseRepository.findAll()
                 .doOnComplete(() -> log.debug("Retrieved all exercises"));
     }
+
+    /**
+     * Find exercises by muscle group and equipment with pagination
+     * Used for exercise browser in workout plan creation
+     */
+    public Flux<Exercise> findByMuscleGroupAndEquipment(String muscleGroup, String equipment, Pageable pageable) {
+        if (muscleGroup == null || muscleGroup.trim().isEmpty()) {
+            return Flux.error(new ValidationException("muscleGroup", "Muscle group cannot be null or empty"));
+        }
+        if (equipment == null || equipment.trim().isEmpty()) {
+            return Flux.error(new ValidationException("equipment", "Equipment cannot be null or empty"));
+        }
+        if (pageable == null) {
+            return Flux.error(new ValidationException("pageable", "Pageable cannot be null"));
+        }
+
+        return exerciseRepository.findByMuscleGroupAndEquipment(muscleGroup, equipment, pageable)
+                .doOnComplete(() -> log.debug("Retrieved exercises for muscle group: {} and equipment: {} (paginated)",
+                        muscleGroup, equipment));
+    }
+
+    /**
+     * Find exercises by muscle group with pagination
+     * Checks both primary and secondary muscle groups
+     */
+    public Flux<Exercise> findByMuscleGroupPaginated(String muscleGroup, Pageable pageable) {
+        if (muscleGroup == null || muscleGroup.trim().isEmpty()) {
+            return Flux.error(new ValidationException("muscleGroup", "Muscle group cannot be null or empty"));
+        }
+        if (pageable == null) {
+            return Flux.error(new ValidationException("pageable", "Pageable cannot be null"));
+        }
+
+        return exerciseRepository.findByMuscleGroupPaginated(muscleGroup, pageable)
+                .doOnComplete(() -> log.debug("Retrieved paginated exercises for muscle group: {}", muscleGroup));
+    }
+
+    /**
+     * Find exercises by equipment with pagination
+     */
+    public Flux<Exercise> findByEquipmentPaginated(String equipment, Pageable pageable) {
+        if (equipment == null || equipment.trim().isEmpty()) {
+            return Flux.error(new ValidationException("equipment", "Equipment cannot be null or empty"));
+        }
+        if (pageable == null) {
+            return Flux.error(new ValidationException("pageable", "Pageable cannot be null"));
+        }
+
+        return exerciseRepository.findByEquipment(equipment, pageable)
+                .doOnComplete(() -> log.debug("Retrieved paginated exercises for equipment: {}", equipment));
+    }
+
+    /**
+     * Find all exercises with pagination
+     * Used for general exercise browsing
+     */
+    public Flux<Exercise> findAllPaginated(Pageable pageable) {
+        if (pageable == null) {
+            return Flux.error(new ValidationException("pageable", "Pageable cannot be null"));
+        }
+
+        return exerciseRepository.findAllBy(pageable)
+                .doOnComplete(() -> log.debug("Retrieved all exercises (paginated)"));
+    }
 }
