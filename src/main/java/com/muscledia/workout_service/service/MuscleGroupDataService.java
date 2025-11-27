@@ -1,6 +1,5 @@
 package com.muscledia.workout_service.service;
 
-import com.muscledia.workout_service.external.exercisedb.dto.ExerciseApiResponse;
 import com.muscledia.workout_service.model.MuscleGroup;
 import com.muscledia.workout_service.repository.MuscleGroupRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,222 +21,124 @@ import java.util.List;
 public class MuscleGroupDataService {
 
     private final MuscleGroupRepository muscleGroupRepository;
-    private final WebClient.Builder webClientBuilder;
 
-    @Value("${api.exercise.url}")
-    private String exerciseApiUrl;
-
-    private WebClient webClient;
-
-    // Updated target muscles from actual ExerciseDB API response (50 muscles!)
+    // Comprehensive list of muscle groups from ExerciseDB
     private final List<String> targetMuscles = Arrays.asList(
-            "shins", "hands", "wrists", "latissimus dorsi", "grip muscles",
-            "sternocleidomastoid", "wrist extensors", "wrist flexors", "brachialis",
-            "lower abs", "rotator cuff", "inner thighs", "ankles", "feet", "groin",
-            "deltoids", "upper chest", "trapezius", "chest", "rear deltoids",
-            "shoulders", "ankle stabilizers", "rhomboids", "core", "hip flexors",
-            "lower back", "obliques", "serratus anterior", "abductors", "levator scapulae",
-            "traps", "upper back", "biceps", "forearms", "adductors", "spine",
-            "triceps", "cardiovascular system", "quads", "lats", "glutes",
-            "pectorals", "abs", "delts", "calves", "hamstrings", "soleus",
-            "abdominals", "back", "quadriceps");
-
-    @PostConstruct
-    public void init() {
-        this.webClient = webClientBuilder.baseUrl(exerciseApiUrl).build();
-    }
+            "abs", "adductors", "abductors", "biceps", "calves", "cardio",
+            "delts", "forearms", "glutes", "hamstrings", "hip flexors",
+            "lats", "lower back", "lower abs", "obliques", "pectorals",
+            "quads", "traps", "triceps", "upper back", "upper chest",
+            "rear delts", "rhomboids", "rotator cuff", "serratus anterior",
+            "levator scapulae", "brachialis", "wrist extensors", "wrist flexors",
+            "grip muscles", "ankle stabilizers", "soleus", "spine",
+            "sternocleidomastoid", "shins", "hands", "wrists", "ankles",
+            "feet", "groin"
+    );
 
     /**
-     * Fetch target muscles list from ExerciseDB API and populate muscle groups
-     * This now handles the comprehensive 50+ muscle groups from the API
+     * Populate muscle groups from predefined list
+     * Call this after exercise migration to ensure all muscle groups exist
      */
-    public Mono<Void> fetchTargetMusclesFromApi() {
-        log.info("Fetching comprehensive target muscles from ExerciseDB API");
-
-        return webClient.get()
-                .uri("/muscles")
-                .retrieve()
-                .bodyToMono(String.class)
-                .map(response -> {
-                    // Parse the JSON response to extract muscle names
-                    // The response format: {"success": true, "data": [{"name": "muscle_name"},
-                    // ...]}
-                    log.debug("Raw API response: {}", response);
-                    return response;
-                })
-                .flatMapMany(response -> {
-                    // For now, use the predefined list since we have the actual data
-                    // In a real implementation, you'd parse the JSON here
-                    return Flux.fromIterable(targetMuscles);
-                })
-                .flatMap(muscleName -> {
-                    String normalizedName = normalizeMuscleGroupName(muscleName);
-                    return findOrCreateMuscleGroup(normalizedName)
-                            .doOnNext(mg -> log.debug("Created/found muscle group: {}", mg.getName()));
-                })
-                .doOnComplete(() -> log.info("Completed comprehensive target muscles population from API"))
-                .doOnError(error -> log.error("Error fetching target muscles from API", error))
-                .then();
-    }
-
-    public Mono<Void> fetchAndPopulateMuscleGroups() {
-        log.info("Starting muscle group data population using target muscles");
+    public Mono<Void> populateMuscleGroups() {
+        log.info("🏋️ Starting muscle group population");
 
         return Flux.fromIterable(targetMuscles)
-                .flatMap(this::fetchMuscleGroupFromApi)
-                .flatMap(this::saveMuscleGroup)
-                .doOnComplete(() -> log.info("Completed muscle group data population"))
-                .doOnError(error -> log.error("Error fetching muscle group data", error))
+                .flatMap(this::findOrCreateMuscleGroup)
+                .doOnNext(mg -> log.debug("✅ Created/found muscle group: {}", mg.getName()))
+                .doOnComplete(() -> log.info("✅ Completed muscle group population"))
+                .doOnError(error -> log.error("❌ Error populating muscle groups", error))
                 .then();
     }
 
     /**
-     * Find or create a muscle group by name - used by ExerciseDataService
-     * Normalizes the name to prevent duplicates and handles potential duplicate
-     * results gracefully
+     * Find or create a muscle group by name
+     * Used by exercise service when needed
      */
     public Mono<MuscleGroup> findOrCreateMuscleGroup(String muscleName) {
         String normalizedName = normalizeMuscleGroupName(muscleName);
-        return muscleGroupRepository.findFirstByName(normalizedName) // Use safer method
+
+        return muscleGroupRepository.findByName(normalizedName)
+                .doOnNext(mg -> log.debug("Found existing muscle group: {}", normalizedName))
+                .switchIfEmpty(
+                        Mono.defer(() -> createNewMuscleGroup(normalizedName))
+                                .doOnNext(mg -> log.info("Created new muscle group: {}", normalizedName))
+                )
                 .onErrorResume(error -> {
-                    log.warn("Error finding muscle group '{}': {}. Attempting to create new one.", normalizedName,
-                            error.getMessage());
+                    log.warn("Error with muscle group '{}': {}. Creating new one.",
+                            normalizedName, error.getMessage());
                     return createNewMuscleGroup(normalizedName);
-                })
-                .switchIfEmpty(createNewMuscleGroup(normalizedName));
+                });
     }
 
     /**
-     * Create a new muscle group - used internally and by ExerciseDataService
+     * Create a new muscle group
      */
     public Mono<MuscleGroup> createNewMuscleGroup(String muscleName) {
         String normalizedName = normalizeMuscleGroupName(muscleName);
+
         MuscleGroup newMuscleGroup = new MuscleGroup();
         newMuscleGroup.setName(normalizedName);
+        newMuscleGroup.setDescription("Muscle group: " + normalizedName);
         newMuscleGroup.setCreatedAt(LocalDateTime.now());
-        log.info("Creating new muscle group: {}", normalizedName);
+
         return muscleGroupRepository.save(newMuscleGroup);
     }
 
     /**
      * Normalize muscle group names to prevent duplicates
-     * Handles the comprehensive 50+ muscle groups from ExerciseDB API
      */
     private String normalizeMuscleGroupName(String muscleName) {
         if (muscleName == null || muscleName.trim().isEmpty()) {
             return "unknown";
         }
 
-        // Convert to lowercase and trim
         String normalized = muscleName.toLowerCase().trim();
 
-        // Handle variations and aliases - prefer the most specific/common name
-        switch (normalized) {
-            // Chest muscles - prefer "pectorals" (more specific)
-            case "chest":
-            case "pecs":
-                return "pectorals";
-            case "upper chest":
-                return "upper chest"; // Keep specific variation
+        // Map common variations to standard names
+        return switch (normalized) {
+            // Chest
+            case "chest", "pecs" -> "pectorals";
+            case "upper chest" -> "upper chest";
 
-            // Shoulder muscles - prefer "delts" (common gym terminology)
-            case "deltoids":
-            case "shoulders":
-                return "delts";
-            case "rear deltoids":
-                return "rear delts"; // Normalize to shorter form
+            // Shoulders
+            case "deltoids", "shoulders" -> "delts";
+            case "rear deltoids" -> "rear delts";
 
-            // Back muscles
-            case "latissimus dorsi":
-                return "lats";
-            case "back":
-                return "upper back"; // Default broad "back" to upper back
-            case "trapezius":
-                return "traps";
+            // Back
+            case "latissimus dorsi" -> "lats";
+            case "back" -> "upper back";
+            case "trapezius" -> "traps";
 
-            // Core/abs muscles - prefer "abs" (most common)
-            case "abdominals":
-            case "core":
-                return "abs";
-            case "lower abs":
-                return "lower abs"; // Keep specific variation
+            // Core
+            case "abdominals", "core" -> "abs";
+            case "lower abs" -> "lower abs";
 
-            // Leg muscles
-            case "quadriceps":
-            case "quadriceps femoris":
-                return "quads";
-            case "inner thighs":
-                return "adductors"; // More anatomically correct
-            case "gluteus maximus":
-            case "gluteal":
-                return "glutes";
+            // Legs
+            case "quadriceps", "quadriceps femoris" -> "quads";
+            case "inner thighs" -> "adductors";
+            case "gluteus maximus", "gluteal" -> "glutes";
 
-            // Arm muscles
-            case "biceps brachii":
-                return "biceps";
-            case "triceps brachii":
-                return "triceps";
+            // Arms
+            case "biceps brachii" -> "biceps";
+            case "triceps brachii" -> "triceps";
 
-            // Calf muscles
-            case "gastrocnemius":
-                return "calves";
-            case "soleus":
-                return "soleus"; // Keep specific calf muscle
-
-            // Specialized muscles - keep as is but clean up
-            case "sternocleidomastoid":
-                return "sternocleidomastoid";
-            case "brachialis":
-                return "brachialis";
-            case "serratus anterior":
-                return "serratus anterior";
-            case "levator scapulae":
-                return "levator scapulae";
-            case "rhomboids":
-                return "rhomboids";
-            case "rotator cuff":
-                return "rotator cuff";
-
-            // Functional groups
-            case "grip muscles":
-                return "grip muscles";
-            case "ankle stabilizers":
-                return "ankle stabilizers";
-            case "hip flexors":
-                return "hip flexors";
+            // Calves
+            case "gastrocnemius" -> "calves";
+            case "soleus" -> "soleus";
 
             // Cardiovascular
-            case "cardiovascular system":
-                return "cardio"; // Shorter, more practical
+            case "cardiovascular system" -> "cardio";
 
-            // Keep specific body parts as is
-            case "wrist extensors":
-            case "wrist flexors":
-            case "forearms":
-            case "hands":
-            case "wrists":
-            case "ankles":
-            case "feet":
-            case "shins":
-            case "groin":
-            case "spine":
-            case "obliques":
-            case "abductors":
-            case "adductors":
-            case "lower back":
-            case "upper back":
-                return normalized; // Keep as is
-
-            default:
-                return normalized;
-        }
+            // Keep everything else as-is
+            default -> normalized;
+        };
     }
 
     /**
      * Clean up duplicate muscle groups in the database
      */
     public Mono<Void> cleanupDuplicateMuscleGroups() {
-        log.info("Starting cleanup of duplicate muscle groups");
+        log.info("🧹 Starting cleanup of duplicate muscle groups");
 
         return muscleGroupRepository.findAll()
                 .groupBy(mg -> normalizeMuscleGroupName(mg.getName()))
@@ -263,45 +164,20 @@ public class MuscleGroupDataService {
                             });
                 })
                 .then()
-                .doOnSuccess(v -> log.info("Completed muscle group cleanup"));
+                .doOnSuccess(v -> log.info("✅ Completed muscle group cleanup"));
     }
 
-    private Mono<MuscleGroup> fetchMuscleGroupFromApi(String muscleName) {
-        return webClient.get()
-                .uri("/muscles/{muscleName}/exercises", muscleName)
-                .retrieve()
-                .bodyToMono(ExerciseApiResponse.class)
-                .map(response -> createMuscleGroupFromApi(muscleName, response))
-                .onErrorResume(error -> {
-                    log.warn("Error fetching data for muscle: {}, creating basic muscle group", muscleName);
-                    return Mono.just(createBasicMuscleGroup(muscleName));
-                });
+    /**
+     * Get all muscle groups
+     */
+    public Flux<MuscleGroup> getAllMuscleGroups() {
+        return muscleGroupRepository.findAll();
     }
 
-    private MuscleGroup createMuscleGroupFromApi(String muscleName, ExerciseApiResponse response) {
-        String normalizedName = normalizeMuscleGroupName(muscleName);
-        MuscleGroup muscleGroup = new MuscleGroup();
-        muscleGroup.setName(normalizedName);
-        muscleGroup.setDescription("Muscle group with " +
-                (response.getData() != null ? response.getData().getExercises().size() : 0) +
-                " associated exercises");
-        muscleGroup.setCreatedAt(LocalDateTime.now());
-        return muscleGroup;
-    }
-
-    private MuscleGroup createBasicMuscleGroup(String muscleName) {
-        String normalizedName = normalizeMuscleGroupName(muscleName);
-        MuscleGroup muscleGroup = new MuscleGroup();
-        muscleGroup.setName(normalizedName);
-        muscleGroup.setDescription("Basic muscle group entry for " + normalizedName);
-        muscleGroup.setCreatedAt(LocalDateTime.now());
-        return muscleGroup;
-    }
-
-    private Mono<MuscleGroup> saveMuscleGroup(MuscleGroup muscleGroup) {
-        return muscleGroupRepository.findByName(muscleGroup.getName())
-                .doOnNext(existing -> log.debug("Muscle group already exists: {}", existing.getName()))
-                .switchIfEmpty(muscleGroupRepository.save(muscleGroup)
-                        .doOnNext(saved -> log.info("Created muscle group: {}", saved.getName())));
+    /**
+     * Count muscle groups
+     */
+    public Mono<Long> countMuscleGroups() {
+        return muscleGroupRepository.count();
     }
 }

@@ -191,8 +191,7 @@ public class MyWorkoutPlanController {
                 .equipment(exercise.getEquipment())
                 .targetMuscle(exercise.getTargetMuscle())
                 .difficulty(exercise.getDifficulty())
-                .animationUrl(exercise.getAnimationUrl())
-                .muscleGroups(exercise.getMuscleGroups())
+                .secondaryMuscles(exercise.getSecondaryMuscles())  // Changed from muscleGroups
                 .build();
     }
 }
