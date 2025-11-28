@@ -2,6 +2,7 @@ package com.muscledia.workout_service.repository;
 
 import java.util.List;
 
+import com.muscledia.workout_service.model.enums.ExerciseCategory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.ReactiveMongoRepository;
@@ -14,48 +15,119 @@ import com.muscledia.workout_service.model.enums.ExerciseDifficulty;
 
 @Repository
 public interface ExerciseRepository extends ReactiveMongoRepository<Exercise, String> {
-    Mono<Exercise> findByExternalApiId(String externalApiId);
+    // ==================== BASIC FINDERS ====================
 
-    // Add custom queries as needed, e.g., find by difficulty, equipment,
-    // target_muscle
+    // FIXED: Changed from findByExternalApiId to findByExternalId
+    Mono<Exercise> findByExternalId(String externalId);
+
+    // ==================== SINGLE FIELD FILTERS ====================
+
     Flux<Exercise> findByDifficulty(ExerciseDifficulty difficulty);
+
+    Flux<Exercise> findByDifficulty(ExerciseDifficulty difficulty, Pageable pageable);
+
+    Mono<Long> countByDifficulty(ExerciseDifficulty difficulty);
 
     Flux<Exercise> findByEquipment(String equipment);
 
-    Flux<Exercise> findByTargetMuscle(String targetMuscle);
+    Flux<Exercise> findByEquipment(String equipment, Pageable pageable);
 
-    // Search by name (case-insensitive, partial match)
-    Flux<Exercise> findByNameContainingIgnoreCase(String name);
-
-    // Find exercises by multiple equipment types
-    @Query("{'equipment': {'$in': ?0}}")
     Flux<Exercise> findByEquipmentIn(List<String> equipmentList);
 
-    // Find exercises targeting specific muscle groups
-    @Query("{'muscleGroups.name': ?0, 'muscleGroups.isPrimary': true}")
-    Flux<Exercise> findByPrimaryMuscleGroup(String muscleName);
+    Flux<Exercise> findByTargetMuscle(String targetMuscle);
 
-    // Find exercises by difficulty with pagination
-    Flux<Exercise> findByDifficulty(ExerciseDifficulty difficulty, Pageable pageable);
-
-    // Search exercises by name and difficulty
-    Flux<Exercise> findByNameContainingIgnoreCaseAndDifficulty(String name, ExerciseDifficulty difficulty);
-
-    // Find exercises that don't require equipment
-    @Query("{'equipment': {'$exists': false}}")
-    Flux<Exercise> findBodyweightExercises();
-
-    // Find exercises by multiple target muscles
-    @Query("{'targetMuscle': {'$in': ?0}}")
     Flux<Exercise> findByTargetMuscleIn(List<String> targetMuscles);
 
-    // Count exercises by difficulty
-    Mono<Long> countByDifficulty(ExerciseDifficulty difficulty);
+    /**
+     * Find by exercise category
+     * NEW: Supports category filtering in workout plan creation
+     */
+    Flux<Exercise> findByCategory(ExerciseCategory category);
 
-    // Find exercises that have animation URLs
-    Flux<Exercise> findByAnimationUrlIsNotNull();
+    Flux<Exercise> findByCategory(ExerciseCategory category, Pageable pageable);
 
-    // Complex search with multiple criteria
-    @Query("{'difficulty': ?0, '$or': [{'targetMuscle': ?1}, {'muscleGroups.name': ?1}]}")
+    /**
+     * Find by body part
+     * NEW: Supports body part filtering in workout plan creation
+     */
+    Flux<Exercise> findByBodyPart(String bodyPart);
+
+    Flux<Exercise> findByBodyPart(String bodyPart, Pageable pageable);
+
+    // ==================== SEARCH ====================
+
+    Flux<Exercise> findByNameContainingIgnoreCase(String name);
+
+    Flux<Exercise> findByNameContainingIgnoreCaseAndDifficulty(String name, ExerciseDifficulty difficulty);
+
+    // ==================== COMPLEX QUERIES ====================
+
+    /**
+     * Find by primary OR secondary muscle groups
+     * Checks if muscle is in targetMuscle OR in secondaryMuscles array
+     */
+    @Query("{'$or': [{'targetMuscle': ?0}, {'secondaryMuscles': ?0}]}")
+    Flux<Exercise> findByPrimaryMuscleGroup(String muscleName);
+
+    /**
+     * Find by muscle group with pagination
+     * NEW: Added pagination support for better performance
+     */
+    @Query("{'$or': [{'targetMuscle': ?0}, {'secondaryMuscles': ?0}]}")
+    Flux<Exercise> findByMuscleGroupPaginated(String muscleGroup, Pageable pageable);
+
+    /**
+     * Find by difficulty and muscle involvement
+     */
+    @Query("{'difficulty': ?0, '$or': [{'targetMuscle': ?1}, {'secondaryMuscles': ?1}]}")
     Flux<Exercise> findByDifficultyAndMuscleInvolved(ExerciseDifficulty difficulty, String muscle);
+
+    /**
+     * Find by muscle group and equipment with pagination
+     * NEW: Supports combined filtering in workout plan creation
+     */
+    @Query("{'$or': [{'targetMuscle': ?0}, {'secondaryMuscles': ?0}], 'equipment': ?1}")
+    Flux<Exercise> findByMuscleGroupAndEquipment(String muscleGroup, String equipment, Pageable pageable);
+
+    /**
+     * Find by category and difficulty
+     * NEW: Supports advanced filtering combinations
+     */
+    Flux<Exercise> findByCategoryAndDifficulty(ExerciseCategory category, ExerciseDifficulty difficulty);
+
+    Flux<Exercise> findByCategoryAndDifficulty(ExerciseCategory category, ExerciseDifficulty difficulty, Pageable pageable);
+
+    /**
+     * Find by body part and equipment
+     * NEW: Supports equipment-specific body part training
+     */
+    Flux<Exercise> findByBodyPartAndEquipment(String bodyPart, String equipment);
+
+    Flux<Exercise> findByBodyPartAndEquipment(String bodyPart, String equipment, Pageable pageable);
+
+    /**
+     * Find by category and body part
+     * NEW: Supports category-specific body part filtering
+     */
+    Flux<Exercise> findByCategoryAndBodyPart(ExerciseCategory category, String bodyPart);
+
+    Flux<Exercise> findByCategoryAndBodyPart(ExerciseCategory category, String bodyPart, Pageable pageable);
+
+    // ==================== SPECIAL FILTERS ====================
+
+    /**
+     * Find bodyweight exercises (no equipment required)
+     */
+    @Query("{'equipment': {'$regex': '^body.*weight$', '$options': 'i'}}")
+    Flux<Exercise> findBodyweightExercises();
+
+    /**
+     * Find exercises with images
+     */
+    Flux<Exercise> findByImageUrlIsNotNull();
+
+    /**
+     * Find all with pagination
+     */
+    Flux<Exercise> findAllBy(Pageable pageable);
 }

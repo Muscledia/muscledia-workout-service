@@ -62,4 +62,10 @@ public interface WorkoutPlanRepository extends ReactiveMongoRepository<WorkoutPl
 
     @Query(value = "{ 'folder_id': ?0 }", exists = true)
     Mono<Boolean> existsByFolderId(String folderId);
+
+    // Find user's plans including public ones they created
+    Flux<WorkoutPlan> findByCreatedByOrderByCreatedAtDesc(Long userId);
+
+    // Check if user owns a plan
+    Mono<Boolean> existsByIdAndCreatedBy(String id, Long userId);
 }

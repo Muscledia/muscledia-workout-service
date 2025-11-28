@@ -55,7 +55,7 @@ public class ExerciseController {
         })
         public Mono<ResponseEntity<Exercise>> getExerciseByExternalId(
                         @Parameter(description = "External API ID", example = "0001") @PathVariable String externalId) {
-                return exerciseService.findByExternalApiId(externalId)
+                return exerciseService.findByExternalId(externalId)
                                 .map(ResponseEntity::ok)
                                 .doOnSuccess(response -> log.debug("Retrieved exercise with external id: {}",
                                                 externalId));
@@ -159,14 +159,6 @@ public class ExerciseController {
                 return exerciseService.countByDifficulty(difficulty);
         }
 
-        @GetMapping("/with-animations")
-        @Operation(summary = "Get exercises with animation URLs", description = "Retrieve exercises that have animation/demonstration URLs available")
-        @ApiResponses(value = {
-                        @ApiResponse(responseCode = "200", description = "Exercises with animations retrieved successfully", content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = Exercise.class))))
-        })
-        public Flux<Exercise> getExercisesWithAnimations() {
-                return exerciseService.findExercisesWithAnimations();
-        }
 
         @GetMapping("/difficulty/{difficulty}/muscle/{muscle}")
         @Operation(summary = "Get exercises by difficulty and muscle", description = "Retrieve exercises filtered by both difficulty level and target muscle")
