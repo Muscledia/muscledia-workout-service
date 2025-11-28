@@ -103,6 +103,10 @@ api:
     max-routines-pages: 10
     max-routine-folders-pages: 3
 
+rapidapi:
+  key: ${RAPIDAPI_KEY:d84907de2cmshe11f68accc}
+  host: exercisedb.p.rapidapi.com
+
 # JWT Configuration
 jwt:
   secret: ${JWT_SECRET:81795ad725b2cadd49d27a60438415588db374020a561ae19cafebeef6339655304975b150867b21d3715e341a49271a75a7dde39776e156af0ddad50f5e6ec3}
