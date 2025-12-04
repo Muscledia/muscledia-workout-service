@@ -139,11 +139,9 @@ public class WorkoutService {
     public Mono<Workout> logSet(String workoutId, Long userId, int exerciseIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
                 .flatMap(workout -> {
-                    // VALIDATE WORKOUT STATUS FIRST
                     var validationResult = workoutValidationService.validateForSetOperations(workout);
                     if (validationResult.isInvalid()) {
-                        log.warn("Set logging denied for workout {} with status {}",
-                                workoutId, workout.getStatus());
+                        log.warn("Set logging denied for workout {} with status {}", workoutId, workout.getStatus());
                         return Mono.error(new InvalidWorkoutStateException(
                                 validationResult.getErrorMessage(),
                                 workout.getStatus().toString(),
@@ -156,16 +154,12 @@ public class WorkoutService {
                     }
 
                     WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
-
-                    // Domain operation: Create and add set
                     WorkoutSet newSet = createWorkoutSetFromRequest(setRequest, exercise.getSets().size() + 1);
                     exercise.addSet(newSet);
 
                     return workoutRepository.save(workout)
                             .flatMap(savedWorkout ->
-                                    processSetForImmediatePRs(newSet, exercise, workoutId, userId)
-                                            .then(Mono.just(savedWorkout))
-                            );
+                                    processSetAndUpdatePRs(savedWorkout, newSet, exercise, workoutId, userId));
                 });
     }
 
@@ -360,12 +354,9 @@ public class WorkoutService {
     public Mono<Workout> updateSet(String workoutId, Long userId, int exerciseIndex, int setIndex, LogSetRequest setRequest) {
         return findByIdAndUserId(workoutId, userId)
                 .flatMap(workout -> {
-
-                    // VALIDATE WORKOUT STATUS FIRST
                     var validationResult = workoutValidationService.validateForSetOperations(workout);
                     if (validationResult.isInvalid()) {
-                        log.warn("Set update denied for workout {} with status {}",
-                                workoutId, workout.getStatus());
+                        log.warn("Set update denied for workout {} with status {}", workoutId, workout.getStatus());
                         return Mono.error(new InvalidWorkoutStateException(
                                 validationResult.getErrorMessage(),
                                 workout.getStatus().toString(),
@@ -380,28 +371,15 @@ public class WorkoutService {
 
                     WorkoutExercise exercise = workout.getExercises().get(exerciseIndex);
                     WorkoutSet existingSet = exercise.getSets().get(setIndex);
-
-                    // Store original state for comparison
                     boolean wasCompleted = Boolean.TRUE.equals(existingSet.getCompleted());
 
-                    // Domain operation: Update set
                     updateWorkoutSetFromRequest(existingSet, setRequest);
 
-                    return workoutRepository.save(workout)
-                            .flatMap(savedWorkout -> {
-                                // CLEAN BUSINESS LOGIC: Only process if meaningful change
-                                if (shouldProcessUpdatedSetForPRs(existingSet, wasCompleted)) {
-                                    log.info("Processing updated set for immediate PRs: exercise={}, weight={}kg, reps={}",
-                                            exercise.getExerciseName(), existingSet.getWeightKg(), existingSet.getReps());
-
-                                    // CLEAN DELEGATION: Same pattern as logSet
-                                    return processSetForImmediatePRs(existingSet, exercise, workoutId, userId)
-                                            .then(Mono.just(savedWorkout));
-                                } else {
-                                    log.debug("Skipping PR processing for updated set (no meaningful change)");
-                                    return Mono.just(savedWorkout);
-                                }
-                            });
+                    if (shouldProcessUpdatedSetForPRs(existingSet, wasCompleted)) {
+                        return processSetAndUpdatePRs(workout, existingSet, exercise, workoutId, userId);
+                    } else {
+                        return workoutRepository.save(workout);
+                    }
                 });
     }
 
@@ -530,6 +508,123 @@ public class WorkoutService {
     }
 
     // ==================== HELPER METHODS (PURE FUNCTIONS) ====================
+
+
+    /**
+     * Process set for PRs and populate personalRecords field
+     * Reusable method for both logSet and updateSet
+     */
+    private Mono<Workout> processSetAndUpdatePRs(
+            Workout workout,
+            WorkoutSet set,
+            WorkoutExercise exercise,
+            String workoutId,
+            Long userId) {
+
+        if (!isValidForPRProcessing(set)) {
+            log.debug("❌ Set not valid for PR processing, skipping. Completed: {}, SetType: {}",
+                    set.getCompleted(), set.getSetType());
+            return workoutRepository.save(workout);
+        }
+
+        log.info("🔍 Processing set for immediate PRs: exercise={}, weight={}kg, reps={}",
+                exercise.getExerciseName(), set.getWeightKg(), set.getReps());
+
+        return personalRecordService.processSetForImmediatePRs(
+                        userId,
+                        exercise.getExerciseId(),
+                        exercise.getExerciseName(),
+                        set,
+                        workoutId
+                )
+                .map(prEvents -> {
+                    log.info("📊 Received {} PR events from PersonalRecordService", prEvents.size());
+
+                    if (!prEvents.isEmpty()) {
+                        List<String> prTypes = prEvents.stream()
+                                .map(event -> {
+                                    log.info("   🏆 PR Type: {} ({}kg -> {}kg)",
+                                            event.getRecordType(),
+                                            event.getPreviousValue(),
+                                            event.getNewValue());
+                                    return event.getRecordType();
+                                })
+                                .distinct()
+                                .collect(java.util.stream.Collectors.toList());
+
+                        log.info("✅ Setting personalRecords on set BEFORE save: {}", prTypes);
+                        set.setPersonalRecords(prTypes);
+
+                        // NEW: Clean up old PR badges from previous sets in this exercise
+                        cleanupOldPersonalRecordBadges(exercise, set, prTypes);
+
+                        log.info("✅ PR DETECTED: {} achieved {} PRs: {}",
+                                exercise.getExerciseName(),
+                                prTypes.size(),
+                                String.join(", ", prTypes));
+                    } else {
+                        log.info("ℹ️ No PRs detected for this set");
+                        set.setPersonalRecords(null);
+                    }
+
+                    return workout;
+                })
+                .flatMap(updatedWorkout -> {
+                    log.info("💾 Saving workout with PR information...");
+                    return workoutRepository.save(updatedWorkout);
+                })
+                .doOnSuccess(savedWorkout -> {
+                    log.info("✅ Workout saved successfully with cleaned PR badges");
+                })
+                .onErrorResume(error -> {
+                    log.error("❌ PR processing failed: {}", error.getMessage(), error);
+                    return workoutRepository.save(workout);
+                });
+    }
+
+    /**
+     * Remove PR badges from previous sets when a new PR of the same type is achieved
+     * Only affects sets in the SAME exercise during the SAME workout session
+     */
+    private void cleanupOldPersonalRecordBadges(
+            WorkoutExercise exercise,
+            WorkoutSet currentSet,
+            List<String> newPRTypes) {
+
+        if (exercise.getSets() == null || newPRTypes == null || newPRTypes.isEmpty()) {
+            return;
+        }
+
+        log.info("🧹 Cleaning up old PR badges for exercise: {}", exercise.getExerciseName());
+
+        for (WorkoutSet previousSet : exercise.getSets()) {
+            // Skip the current set
+            if (previousSet.equals(currentSet)) {
+                continue;
+            }
+
+            // Skip sets without PR badges
+            if (previousSet.getPersonalRecords() == null || previousSet.getPersonalRecords().isEmpty()) {
+                continue;
+            }
+
+            // Remove PR types that are now achieved by the current set
+            List<String> filteredPRs = previousSet.getPersonalRecords().stream()
+                    .filter(prType -> !newPRTypes.contains(prType))
+                    .collect(java.util.stream.Collectors.toList());
+
+            if (filteredPRs.isEmpty()) {
+                log.info("   🗑️ Removing all PR badges from set {}", previousSet.getSetNumber());
+                previousSet.setPersonalRecords(null);
+            } else if (filteredPRs.size() < previousSet.getPersonalRecords().size()) {
+                log.info("   🔄 Updating PR badges for set {} from {} to {}",
+                        previousSet.getSetNumber(),
+                        previousSet.getPersonalRecords(),
+                        filteredPRs);
+                previousSet.setPersonalRecords(filteredPRs);
+            }
+        }
+    }
 
     /**
      * Pure function: Create WorkoutSet from request with set type classification
