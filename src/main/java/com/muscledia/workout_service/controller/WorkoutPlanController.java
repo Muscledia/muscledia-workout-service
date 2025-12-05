@@ -233,14 +233,8 @@ public class WorkoutPlanController {
                                 .flatMap(existing -> authenticationService.isCurrentUser(existing.getCreatedBy())
                                                 .flatMap(isOwner -> {
                                                         if (isOwner) {
-                                                                return authenticationService.getCurrentUserId()
-                                                                                .flatMap(userId -> {
-                                                                                        workoutPlan.setCreatedBy(
-                                                                                                        userId);
-                                                                                        return workoutPlanService.save(
-                                                                                                        workoutPlan);
-                                                                                })
-                                                                                .map(ResponseEntity::ok);
+                                                                return workoutPlanService.update(id, workoutPlan)
+                                                                        .map(ResponseEntity::ok);
                                                         } else {
                                                                 return Mono.just(ResponseEntity
                                                                                 .status(HttpStatus.FORBIDDEN)

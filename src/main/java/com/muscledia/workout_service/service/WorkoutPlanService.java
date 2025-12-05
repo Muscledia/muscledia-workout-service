@@ -1,9 +1,11 @@
 package com.muscledia.workout_service.service;
 
+import com.muscledia.workout_service.dto.request.AddExerciseToPlanRequest;
 import com.muscledia.workout_service.exception.ResourceNotFoundException;
 import com.muscledia.workout_service.exception.SomeDuplicateEntryException;
 import com.muscledia.workout_service.exception.ValidationException;
 import com.muscledia.workout_service.model.WorkoutPlan;
+import com.muscledia.workout_service.model.embedded.PlannedExercise;
 import com.muscledia.workout_service.repository.WorkoutPlanRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 
 /**
  * Service for WorkoutPlan operations
@@ -33,6 +36,7 @@ import java.time.LocalDateTime;
 @Slf4j
 public class WorkoutPlanService {
     private final WorkoutPlanRepository workoutPlanRepository;
+    private final ExerciseService exerciseService;
 
     // ==================== BASIC CRUD OPERATIONS ====================
 
@@ -76,18 +80,40 @@ public class WorkoutPlanService {
 
         return findById(id)
                 .flatMap(existing -> {
-                    workoutPlan.setId(id);
-                    workoutPlan.setCreatedAt(existing.getCreatedAt());
-                    workoutPlan.setCreatedBy(existing.getCreatedBy());
-                    workoutPlan.setUpdatedAt(LocalDateTime.now());
+                    // PARTIAL UPDATE LOGIC: Only update fields if they are provided (not null)
 
-                    if (workoutPlan.getUsageCount() == null) {
-                        workoutPlan.setUsageCount(existing.getUsageCount());
+                    if (workoutPlan.getTitle() != null) {
+                        existing.setTitle(workoutPlan.getTitle());
                     }
 
-                    return workoutPlanRepository.save(workoutPlan);
+                    if (workoutPlan.getDescription() != null) {
+                        existing.setDescription(workoutPlan.getDescription());
+                    }
+
+                    // Crucial: Only update exercises if the list is explicitly provided
+                    // This allows sending { title: "New" } without wiping exercises
+                    if (workoutPlan.getExercises() != null) {
+                        existing.setExercises(workoutPlan.getExercises());
+                    }
+
+                    if (workoutPlan.getEstimatedDurationMinutes() != null) {
+                        existing.setEstimatedDurationMinutes(workoutPlan.getEstimatedDurationMinutes());
+                    }
+
+                    if (workoutPlan.getIsPublic() != null) {
+                        existing.setIsPublic(workoutPlan.getIsPublic());
+                    }
+
+                    if (workoutPlan.getFolderId() != null) {
+                        existing.setFolderId(workoutPlan.getFolderId());
+                    }
+
+                    // Always update system fields
+                    existing.setUpdatedAt(LocalDateTime.now());
+
+                    return workoutPlanRepository.save(existing);
                 })
-                .doOnSuccess(updated -> log.debug("Updated workout plan: {}", updated.getTitle()));
+                .doOnSuccess(updated -> log.debug("Updated workout plan (partial): {}", updated.getTitle()));
     }
 
     public Mono<Void> deleteById(String id) {
@@ -201,6 +227,53 @@ public class WorkoutPlanService {
                 .then(workoutPlanRepository.save(personalPlan))
                 .doOnSuccess(saved -> log.debug("Created personal copy of workout plan: '{}'", saved.getTitle()));
     }
+
+    // ==================== GRANULAR EXERCISE MANAGEMENT ====================
+    // Moved from UserWorkoutPlanService
+
+    public Mono<WorkoutPlan> addExerciseToPlan(String planId, Long userId, AddExerciseToPlanRequest request) {
+        return findByIdAndValidateOwnership(planId, userId)
+                .flatMap(plan -> exerciseService.findById(request.getExerciseId())
+                        .map(exercise -> {
+                            // Map exercise to embedded format
+                            PlannedExercise planned = new PlannedExercise();
+                            planned.setExerciseTemplateId(exercise.getId());
+                            planned.setTitle(exercise.getName());
+                            // ... map other fields
+                            return planned;
+                        })
+                        .flatMap(planned -> {
+                            if (plan.getExercises() == null) plan.setExercises(new ArrayList<>());
+                            planned.setIndex(plan.getExercises().size());
+                            plan.getExercises().add(planned);
+
+                            // Recalculate metadata
+                            // plan.calculateDuration();
+                            plan.setUpdatedAt(LocalDateTime.now());
+
+                            return workoutPlanRepository.save(plan);
+                        }));
+    }
+
+    public Mono<WorkoutPlan> removeExerciseFromPlan(String planId, Long userId, int exerciseIndex) {
+        return findByIdAndValidateOwnership(planId, userId)
+                .flatMap(plan -> {
+                    if (plan.getExercises() == null || exerciseIndex >= plan.getExercises().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid index"));
+                    }
+
+                    plan.getExercises().remove(exerciseIndex);
+
+                    // Re-index remaining exercises
+                    for(int i=0; i<plan.getExercises().size(); i++) {
+                        plan.getExercises().get(i).setIndex(i);
+                    }
+
+                    plan.setUpdatedAt(LocalDateTime.now());
+                    return workoutPlanRepository.save(plan);
+                });
+    }
+
 
     // ==================== FILTERING OPERATIONS ====================
 

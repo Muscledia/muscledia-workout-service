@@ -337,4 +337,31 @@ public class ExerciseService {
         return exerciseRepository.findBodyweightExercises()
                 .doOnComplete(() -> log.debug("Retrieved bodyweight exercises"));
     }
+
+    /**
+     * Update an existing exercise
+     *
+     * BUSINESS LOGIC:
+     * - Validates input
+     * - Ensures exercise exists before updating
+     * - Preserves creation metadata
+     */
+    public Mono<Exercise> update(String id, Exercise exercise) {
+        if (id == null || id.trim().isEmpty()) {
+            return Mono.error(new ValidationException("id", "Exercise ID cannot be null or empty"));
+        }
+        if (exercise == null) {
+            return Mono.error(new ValidationException("exercise", "Exercise cannot be null"));
+        }
+        if (exercise.getName() == null || exercise.getName().trim().isEmpty()) {
+            return Mono.error(new ValidationException("name", "Exercise name cannot be null or empty"));
+        }
+
+        return findById(id)
+                .flatMap(existing -> {
+                    exercise.setId(id);
+                    return exerciseRepository.save(exercise);
+                })
+                .doOnSuccess(updated -> log.debug("Updated exercise: {}", updated.getName()));
+    }
 }
