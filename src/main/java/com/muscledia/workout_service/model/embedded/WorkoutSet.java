@@ -16,6 +16,7 @@ import org.springframework.data.mongodb.core.mapping.Field;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -90,6 +91,12 @@ public class WorkoutSet {
     @Field("completed_at")
     @JsonProperty("completedAt")
     private LocalDateTime completedAt;
+
+    @Field("personal_records")
+    @JsonProperty("personalRecords")
+    @Schema(description = "List of personal record types achieved in this set",
+            example = "[\"MAX_WEIGHT\", \"MAX_REPS\"]")
+    private List<String> personalRecords; // e.g., ["MAX_WEIGHT", "MAX_REPS"]
 
     // ADDITIONAL CONTEXT
     @Schema(description = "Additional notes for this set", example = "Felt heavy today")

@@ -287,6 +287,143 @@ public class RoutineFolderController {
 
 
         /**
+         * Update personal routine folder (rename, change description)
+         * Business logic: Only allows updates to personal folders owned by the user
+         */
+        @PutMapping("/personal/{id}")
+        @Operation(
+                summary = "Update personal routine folder",
+                description = "Update title, description, or metadata of a personal routine folder",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "200", description = "Routine folder updated successfully"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "403", description = "Access denied - not the owner"),
+                @ApiResponse(responseCode = "404", description = "Routine folder not found")
+        })
+        public Mono<ResponseEntity<RoutineFolder>> updatePersonalRoutineFolder(
+                @PathVariable String id,
+                @RequestBody Map<String, Object> updates
+        ) {
+                log.info("Updating personal routine folder: {}", id);
+
+                return authenticationService.getCurrentUserId()
+                        .flatMap(userId -> routineFolderService.updatePersonalRoutineFolder(id, userId, updates))
+                        .map(ResponseEntity::ok)
+                        .onErrorResume(this::handleUpdateError)
+                        .doOnSuccess(response -> log.info("Successfully updated routine folder: {}", id))
+                        .doOnError(error -> log.error("Error updating routine folder {}: {}", id, error.getMessage()));
+        }
+
+        /**
+         * Add a workout plan to a personal routine folder
+         * Business logic: Only allows adding plans to personal folders owned by the user
+         */
+        @PostMapping("/personal/{folderId}/workout-plans/{planId}")
+        @ResponseStatus(HttpStatus.OK)
+        @Operation(
+                summary = "Add workout plan to routine folder",
+                description = "Add an existing workout plan to a personal routine folder",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "200", description = "Workout plan added successfully"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "403", description = "Access denied - not the owner"),
+                @ApiResponse(responseCode = "404", description = "Routine folder or workout plan not found")
+        })
+        public Mono<ResponseEntity<RoutineFolder>> addWorkoutPlanToRoutineFolder(
+                @PathVariable String folderId,
+                @PathVariable String planId
+        ) {
+                log.info("Adding workout plan {} to routine folder {}", planId, folderId);
+
+                return authenticationService.getCurrentUserId()
+                        .flatMap(userId -> routineFolderService.addWorkoutPlanToPersonalFolder(folderId, planId, userId))
+                        .map(ResponseEntity::ok)
+                        .onErrorMap(this::mapToHttpException)
+                        .doOnSuccess(response -> log.info("Successfully added workout plan to folder"))
+                        .doOnError(error -> log.error("Error adding workout plan: {}", error.getMessage()));
+        }
+
+        /**
+         * Remove a workout plan from a personal routine folder
+         * Business logic: Only allows removing plans from personal folders owned by the user
+         */
+        @DeleteMapping("/personal/{folderId}/workout-plans/{planId}")
+        @ResponseStatus(HttpStatus.OK)
+        @Operation(
+                summary = "Remove workout plan from routine folder",
+                description = "Remove a workout plan from a personal routine folder",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "200", description = "Workout plan removed successfully"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "403", description = "Access denied - not the owner"),
+                @ApiResponse(responseCode = "404", description = "Routine folder or workout plan not found")
+        })
+        public Mono<ResponseEntity<RoutineFolder>> removeWorkoutPlanFromRoutineFolder(
+                @PathVariable String folderId,
+                @PathVariable String planId
+        ) {
+                log.info("Removing workout plan {} from routine folder {}", planId, folderId);
+
+                return authenticationService.getCurrentUserId()
+                        .flatMap(userId -> routineFolderService.removeWorkoutPlanFromPersonalFolder(folderId, planId, userId))
+                        .map(ResponseEntity::ok)
+                        .onErrorMap(this::mapToHttpException)
+                        .doOnSuccess(response -> log.info("Successfully removed workout plan from folder"))
+                        .doOnError(error -> log.error("Error removing workout plan: {}", error.getMessage()));
+        }
+
+        /**
+         * Remove routine folder from personal collection
+         * Business logic: Deletes the folder and all its personal workout plans
+         */
+        @DeleteMapping("/personal/{id}")
+        @ResponseStatus(HttpStatus.NO_CONTENT)
+        @Operation(
+                summary = "Remove routine from personal collection",
+                description = "Remove a routine folder and all its workout plans from personal collection",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "204", description = "Routine removed successfully"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "403", description = "Access denied - not the owner"),
+                @ApiResponse(responseCode = "404", description = "Routine folder not found")
+        })
+        public Mono<ResponseEntity<Void>> removeRoutineFromPersonalCollection(
+                @PathVariable String id
+        ) {
+                log.info("Removing routine folder from personal collection: {}", id);
+
+                return authenticationService.getCurrentUserId()
+                        .flatMap(userId -> routineFolderService.removeFromPersonalCollection(id, userId))
+                        .then(Mono.just(ResponseEntity.noContent().<Void>build()))
+                        .onErrorMap(this::mapToHttpException)
+                        .doOnSuccess(response -> log.info("Successfully removed routine from collection"))
+                        .doOnError(error -> log.error("Error removing routine: {}", error.getMessage()));
+        }
+
+        /**
+         * Helper method for handling update errors
+         */
+        private Mono<ResponseEntity<RoutineFolder>> handleUpdateError(Throwable error) {
+                if (error instanceof IllegalArgumentException) {
+                        return Mono.just(ResponseEntity.notFound().build());
+                }
+                if (error instanceof SecurityException) {
+                        return Mono.just(ResponseEntity.status(HttpStatus.FORBIDDEN).build());
+                }
+                return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build());
+        }
+
+
+
+        /**
          * CLEAN: Simple exception mapping without business logic
          */
         private Throwable mapToHttpException(Throwable throwable) {
@@ -331,4 +468,6 @@ public class RoutineFolderController {
                 }
                 return rootCause;
         }
+
+
 }

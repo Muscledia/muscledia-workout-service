@@ -10,6 +10,21 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 
+
+/**
+ * COMPLETE WorkoutPlanRepository with all CRUD operations
+ *
+ * CLEAN ARCHITECTURE:
+ * - Data access layer abstraction
+ * - All queries defined here, no business logic
+ * - Reactive operations via Project Reactor
+ * - Proper transaction and index support
+ *
+ * SEPARATION OF CONCERNS:
+ * - Repository: Data access only
+ * - Service: Business logic
+ * - Controller: HTTP concerns
+ */
 @Repository
 public interface WorkoutPlanRepository extends ReactiveMongoRepository<WorkoutPlan, String> {
     // Find by name (case-insensitive, partial match)

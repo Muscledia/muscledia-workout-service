@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Set response within exercise
@@ -53,4 +54,9 @@ public class WorkoutSetResponse {
     private String completedAt;
 
     private BigDecimal volume;
+
+    @JsonProperty("personalRecords")
+    @Schema(description = "Personal records achieved in this set",
+            example = "[\"MAX_WEIGHT\", \"MAX_REPS\", \"MAX_VOLUME\"]")
+    private List<String> personalRecords;
 }

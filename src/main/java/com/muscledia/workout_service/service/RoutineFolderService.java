@@ -506,6 +506,110 @@ public class RoutineFolderService {
     }
 
     /**
+     * Update personal routine folder
+     * Business logic: Validates ownership and allows updates to title, description, metadata
+     */
+    public Mono<RoutineFolder> updatePersonalRoutineFolder(
+            String folderId,
+            Long userId,
+            Map<String, Object> updates
+    ) {
+        log.debug("Updating personal routine folder {} for user {}", folderId, userId);
+
+        return validatePersonalFolderOwnership(folderId, userId)
+                .flatMap(folder -> {
+                    // Apply updates
+                    if (updates.containsKey("title")) {
+                        folder.setTitle((String) updates.get("title"));
+                    }
+                    if (updates.containsKey("difficultyLevel")) {
+                        folder.setDifficultyLevel((String) updates.get("difficultyLevel"));
+                    }
+                    if (updates.containsKey("equipmentType")) {
+                        folder.setEquipmentType((String) updates.get("equipmentType"));
+                    }
+                    if (updates.containsKey("workoutSplit")) {
+                        folder.setWorkoutSplit((String) updates.get("workoutSplit"));
+                    }
+
+                    folder.setUpdatedAt(LocalDateTime.now());
+
+                    return routineFolderRepository.save(folder);
+                })
+                .doOnSuccess(saved -> log.info("Updated routine folder: '{}'", saved.getTitle()))
+                .doOnError(error -> log.error("Error updating routine folder: {}", error.getMessage()));
+    }
+
+    /**
+     * Add workout plan to personal routine folder
+     * Business logic: Validates ownership, checks plan exists, adds plan ID to folder
+     */
+    public Mono<RoutineFolder> addWorkoutPlanToPersonalFolder(
+            String folderId,
+            String planId,
+            Long userId
+    ) {
+        log.debug("Adding workout plan {} to folder {} for user {}", planId, folderId, userId);
+
+        return validatePersonalFolderOwnership(folderId, userId)
+                .zipWith(validateWorkoutPlanExists(planId))
+                .flatMap(tuple -> {
+                    RoutineFolder folder = tuple.getT1();
+
+                    // Check if plan already in folder
+                    if (folder.getWorkoutPlanIds().contains(planId)) {
+                        return Mono.error(new IllegalArgumentException(
+                                "Workout plan already exists in this routine folder"
+                        ));
+                    }
+
+                    folder.addWorkoutPlanId(planId);
+                    folder.setUpdatedAt(LocalDateTime.now());
+
+                    return routineFolderRepository.save(folder);
+                })
+                .doOnSuccess(saved -> log.info("Added workout plan to folder: '{}'", saved.getTitle()))
+                .doOnError(error -> log.error("Error adding workout plan: {}", error.getMessage()));
+    }
+
+    /**
+     * Remove workout plan from personal routine folder
+     * Business logic: Validates ownership, removes plan ID from folder
+     */
+    public Mono<RoutineFolder> removeWorkoutPlanFromPersonalFolder(
+            String folderId,
+            String planId,
+            Long userId
+    ) {
+        log.debug("Removing workout plan {} from folder {} for user {}", planId, folderId, userId);
+
+        return validatePersonalFolderOwnership(folderId, userId)
+                .flatMap(folder -> {
+                    if (!folder.getWorkoutPlanIds().contains(planId)) {
+                        return Mono.error(new IllegalArgumentException(
+                                "Workout plan not found in this routine folder"
+                        ));
+                    }
+
+                    folder.removeWorkoutPlanId(planId);
+                    folder.setUpdatedAt(LocalDateTime.now());
+
+                    return routineFolderRepository.save(folder);
+                })
+                .doOnSuccess(saved -> log.info("Removed workout plan from folder: '{}'", saved.getTitle()))
+                .doOnError(error -> log.error("Error removing workout plan: {}", error.getMessage()));
+    }
+
+    /**
+     * Validate that a workout plan exists
+     */
+    private Mono<WorkoutPlan> validateWorkoutPlanExists(String planId) {
+        return workoutPlanRepository.findById(planId)
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Workout plan not found")))
+                .doOnNext(plan -> log.debug("Validated workout plan exists: '{}'", plan.getTitle()));
+    }
+
+    /**
      * Helper methods for additional functionality
      */
 
