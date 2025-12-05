@@ -651,21 +651,100 @@ public class WorkoutService {
 
     /**
      * Pure function: Update existing WorkoutSet
+     * FIXED: Implements partial update logic to prevent data loss
      */
     private void updateWorkoutSetFromRequest(WorkoutSet existingSet, LogSetRequest request) {
-        existingSet.setWeightKg(request.getWeightKg());
-        existingSet.setReps(request.getReps());
-        existingSet.setDurationSeconds(request.getDurationSeconds());
-        existingSet.setDistanceMeters(request.getDistanceMeters());
-        existingSet.setRestSeconds(request.getRestSeconds());
-        existingSet.setRpe(request.getRpe());
-        existingSet.setCompleted(request.getCompleted());
-        existingSet.setSetType(request.getSetType()); // Direct assignment, no sync needed
-        existingSet.setNotes(request.getNotes());
+        // Only update fields that are present in the request
 
-        if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
-            existingSet.markCompleted();
+        if (request.getWeightKg() != null) {
+            existingSet.setWeightKg(request.getWeightKg());
         }
+
+        if (request.getReps() != null) {
+            existingSet.setReps(request.getReps());
+        }
+
+        if (request.getDurationSeconds() != null) {
+            existingSet.setDurationSeconds(request.getDurationSeconds());
+        }
+
+        if (request.getDistanceMeters() != null) {
+            existingSet.setDistanceMeters(request.getDistanceMeters());
+        }
+
+        if (request.getRestSeconds() != null) {
+            existingSet.setRestSeconds(request.getRestSeconds());
+        }
+
+        if (request.getRpe() != null) {
+            existingSet.setRpe(request.getRpe());
+        }
+
+        if (request.getCompleted() != null) {
+            existingSet.setCompleted(request.getCompleted());
+            // Logic: If marking as complete for the first time, set timestamp
+            if (Boolean.TRUE.equals(request.getCompleted()) && existingSet.getCompletedAt() == null) {
+                existingSet.markCompleted();
+            }
+        }
+
+        if (request.getSetType() != null) {
+            existingSet.setSetType(request.getSetType());
+        }
+
+        if (request.getNotes() != null) {
+            existingSet.setNotes(request.getNotes());
+        }
+    }
+
+    /**
+     * Update exercise details in active workout (Partial Update)
+     */
+    public Mono<Workout> updateExerciseInWorkout(String workoutId, Long userId, int exerciseIndex, WorkoutExercise updateRequest) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (!WorkoutStatus.IN_PROGRESS.equals(workout.getStatus())) {
+                        return Mono.error(new InvalidWorkoutStateException("Workout is not in progress"));
+                    }
+
+                    if (exerciseIndex < 0 || exerciseIndex >= workout.getExercises().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid exercise index"));
+                    }
+
+                    WorkoutExercise existingExercise = workout.getExercises().get(exerciseIndex);
+
+                    // Partial update logic
+                    if (updateRequest.getNotes() != null) {
+                        existingExercise.setNotes(updateRequest.getNotes());
+                    }
+                    if (updateRequest.getEquipment() != null) {
+                        existingExercise.setEquipment(updateRequest.getEquipment());
+                    }
+                    // Add other fields as needed, but DO NOT overwrite sets here
+
+                    return workoutRepository.save(workout);
+                });
+    }
+
+    /**
+     * Remove exercise from active workout
+     */
+    public Mono<Void> removeExerciseFromWorkout(String workoutId, Long userId, int exerciseIndex) {
+        return findByIdAndUserId(workoutId, userId)
+                .flatMap(workout -> {
+                    if (!WorkoutStatus.IN_PROGRESS.equals(workout.getStatus())) {
+                        return Mono.error(new InvalidWorkoutStateException("Cannot modify completed workout"));
+                    }
+
+                    if (workout.getExercises() == null || exerciseIndex < 0 || exerciseIndex >= workout.getExercises().size()) {
+                        return Mono.error(new IllegalArgumentException("Invalid exercise index"));
+                    }
+
+                    workout.getExercises().remove(exerciseIndex);
+
+                    return workoutRepository.save(workout);
+                })
+                .then();
     }
 
     private void applyCompletionData(Workout workout, Map<String, Object> completionData) {
@@ -708,7 +787,7 @@ public class WorkoutService {
             notes.append("Plan: ").append(plan.getDescription());
         }
         if (requestNotes != null && !requestNotes.isEmpty()) {
-            if (notes.length() > 0) notes.append("\n\n");
+            if (!notes.isEmpty()) notes.append("\n\n");
             notes.append("Notes: ").append(requestNotes);
         }
         return notes.toString();
