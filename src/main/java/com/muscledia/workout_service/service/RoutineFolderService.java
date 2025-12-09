@@ -1,6 +1,8 @@
 package com.muscledia.workout_service.service;
 
 import com.muscledia.workout_service.exception.SomeDuplicateEntryException;
+import com.muscledia.workout_service.exception.SomeEntityNotFoundException;
+import com.muscledia.workout_service.exception.SomeInvalidRequestException;
 import com.muscledia.workout_service.model.RoutineFolder;
 import com.muscledia.workout_service.model.WorkoutPlan;
 import com.muscledia.workout_service.repository.RoutineFolderRepository;
@@ -23,6 +25,7 @@ import java.util.Map;
 public class RoutineFolderService {
     private final RoutineFolderRepository routineFolderRepository;
     private final WorkoutPlanRepository workoutPlanRepository;
+    private final AuthenticationService authenticationService;
     private final TransactionalOperator transactionalOperator; // Injected for reactive transactions
 
 
@@ -79,52 +82,37 @@ public class RoutineFolderService {
                 .doOnSuccess(saved -> log.debug("Saved routine folder: {}", saved.getTitle()));
     }
 
-    public Mono<RoutineFolder> saveToPersonalCollection(String publicFolderId, Long userId) {
-        return findById(publicFolderId)
-                .flatMap(publicFolder -> {
-                    // Create a copy for the user's personal collection
-                    RoutineFolder personalFolder = new RoutineFolder();
-                    personalFolder.setTitle(publicFolder.getTitle());
-                    personalFolder.setWorkoutPlanIds(publicFolder.getWorkoutPlanIds());
-                    personalFolder.setDifficultyLevel(publicFolder.getDifficultyLevel());
-                    personalFolder.setEquipmentType(publicFolder.getEquipmentType());
-                    personalFolder.setWorkoutSplit(publicFolder.getWorkoutSplit());
-                    personalFolder.setIsPublic(false); // Personal copy
-                    personalFolder.setCreatedBy(userId);
-                    personalFolder.setUsageCount(0L);
-                    personalFolder.setCreatedAt(LocalDateTime.now());
-
-                    // Increment usage count on original public folder
-                    publicFolder.setUsageCount(publicFolder.getUsageCount() + 1);
-
-                    return routineFolderRepository.save(publicFolder)
-                            .then(routineFolderRepository.save(personalFolder));
-                })
-                .doOnSuccess(saved -> log.debug("Saved routine folder to personal collection for user: {}", userId));
-    }
 
     /**
      * FIXED: Saves a public routine folder and all its associated workout plans to a user's personal collection.
-     * This operation is transactional to ensure all copies are saved together.
+     * Operation is Idempotent: If it already exists, returns the existing copy instead of erroring.
      *
      * @param publicId The ID of the public routine folder to copy.
      * @param userId   The ID of the user saving the folder.
-     * @return Mono<RoutineFolder> The newly created personal routine folder.
+     * @return Mono<RoutineFolder> The new or existing personal routine folder.
      */
     public Mono<RoutineFolder> savePublicRoutineFolderAndPlans(String publicId, Long userId) {
         log.info("🚀 Starting savePublicRoutineFolderAndPlans for publicId: {} and userId: {}", publicId, userId);
 
         return validateAndGetPublicFolder(publicId)
-                .doOnNext(folder -> log.debug("Validated public folder: '{}'", folder.getTitle()))
-                .flatMap(publicFolder -> checkForDuplicateFolder(publicFolder, userId)
-                        .doOnSuccess(v -> log.debug("No duplicate found, proceeding with save"))
-                        .then(Mono.defer(() -> createAndSavePlans(publicFolder, userId))))
+                .flatMap(publicFolder -> findExistingPersonalFolder(publicFolder, userId)
+                        .flatMap(existing -> {
+                            log.info("♻️ Routine folder '{}' already exists in collection. Returning existing copy.", existing.getTitle());
+                            return Mono.just(existing);
+                        })
+                        .switchIfEmpty(
+                                Mono.defer(() -> {
+                                    log.info("🆕 No duplicate found. Creating new copy for '{}'", publicFolder.getTitle());
+                                    return createAndSavePlans(publicFolder, userId);
+                                })
+                        )
+                )
                 .as(transactionalOperator::transactional)
-                .doOnSuccess(saved -> log.info("🎉 Successfully saved routine folder '{}' and plans to personal collection for user: {}",
-                        saved.getTitle(), userId))
+                .doOnSuccess(saved -> log.info("🎉 Operation complete for routine folder '{}' (User: {})", saved.getTitle(), userId))
                 .doOnError(error -> log.error("Error in savePublicRoutineFolderAndPlans: {} - {}",
                         error.getClass().getSimpleName(), error.getMessage()));
     }
+
 
     private Mono<RoutineFolder> validateAndGetPublicFolder(String publicId) {
         log.debug("🔍 Validating public folder with ID: {}", publicId);
@@ -161,37 +149,18 @@ public class RoutineFolderService {
     }
 
     /**
-     * FIXED: Check for duplicate using the correct repository method and parameter order
+     * Check if a folder with the same title already exists in user's personal collection
+     * Returns the existing folder if found, or empty if not.
      */
-    private Mono<Void> checkForDuplicateFolder(RoutineFolder publicFolder, Long userId) {
-        log.debug("Checking for duplicate personal folder: title='{}', userId={}", publicFolder.getTitle(), userId);
+    private Mono<RoutineFolder> findExistingPersonalFolder(RoutineFolder publicFolder, Long userId) {
+        // Since we generate new Hevy IDs for copies, we mainly check by Title
+        // Note: You might want to refine this if you allow users to have two folders with the same name
 
-        // FIXED: Use the correct method with proper parameter order (title, userId, isPublic)
         return routineFolderRepository.findByTitleAndCreatedByAndIsPublic(
-                        publicFolder.getTitle(),
-                        userId,
-                        false // isPublic = false for personal folders
-                )
-                .hasElement()
-                .doOnNext(exists -> {
-                    if (exists) {
-                        log.warn("Duplicate found: title='{}', userId={}", publicFolder.getTitle(), userId);
-                    } else {
-                        log.debug("No duplicate found: title='{}', userId={}", publicFolder.getTitle(), userId);
-                    }
-                })
-                .flatMap(exists -> exists
-                        ? Mono.<Void>error(new SomeDuplicateEntryException(
-                        String.format("A personal routine folder with title '%s' already exists for user %d.",
-                                publicFolder.getTitle(), userId)))
-                        : Mono.empty())
-                .onErrorResume(SomeDuplicateEntryException.class, Mono::error) // Re-throw duplicate exceptions
-                .onErrorResume(error -> {
-                    log.error("Error during duplicate check: {}", error.getMessage(), error);
-                    // If there's an error checking for duplicates, assume no duplicate to allow the operation
-                    // The database will handle the actual constraint if there really is a duplicate
-                    return Mono.empty();
-                });
+                publicFolder.getTitle(),
+                userId,
+                false
+        ); // Get the first match if any
     }
 
     /**
@@ -387,8 +356,8 @@ public class RoutineFolderService {
     }
 
     /**
-            * Count personal routine folders for a user
-    */
+     * Count personal routine folders for a user
+     */
     public Mono<Long> countPersonalRoutineFolders(Long userId) {
         log.debug("Counting personal routine folders for user: {}", userId);
 
@@ -598,6 +567,27 @@ public class RoutineFolderService {
                 })
                 .doOnSuccess(saved -> log.info("Removed workout plan from folder: '{}'", saved.getTitle()))
                 .doOnError(error -> log.error("Error removing workout plan: {}", error.getMessage()));
+    }
+
+    private Mono<Void> copyPlannedExercises(String sourcePlanId, String targetPlanId) {
+        log.debug("Copying planned exercises from plan {} to plan {}", sourcePlanId, targetPlanId);
+
+        return workoutPlanRepository.findById(sourcePlanId)
+                .flatMap(sourcePlan -> {
+                    if (sourcePlan.getExercises() == null || sourcePlan.getExercises().isEmpty()) {
+                        return Mono.empty();
+                    }
+
+                    return workoutPlanRepository.findById(targetPlanId)
+                            .flatMap(targetPlan -> {
+                                targetPlan.setExercises(sourcePlan.getExercises());
+                                return workoutPlanRepository.save(targetPlan).then();
+                            });
+                })
+                .onErrorResume(error -> {
+                    log.warn("Error copying exercises: {}", error.getMessage());
+                    return Mono.empty();
+                });
     }
 
     /**

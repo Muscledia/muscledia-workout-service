@@ -41,6 +41,16 @@ public interface RoutineFolderRepository extends ReactiveMongoRepository<Routine
     Mono<Boolean> existsByHevyId(Long hevyId);
 
     /**
+     * Find a personal folder by hevyId (original source reference)
+     * Used for duplicate prevention when saving from public collection
+     */
+    Mono<RoutineFolder> findByHevyIdAndCreatedByAndIsPublic(
+            Long hevyId,
+            Long createdBy,
+            Boolean isPublic
+    );
+
+    /**
      * Find by difficulty level (public only)
      */
     @Query("{ 'difficultyLevel': ?0, 'isPublic': true }")
