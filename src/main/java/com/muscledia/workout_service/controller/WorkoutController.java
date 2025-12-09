@@ -1,52 +1,34 @@
 package com.muscledia.workout_service.controller;
 
-import com.muscledia.workout_service.constant.WorkoutPlanConstants;
-import com.muscledia.workout_service.dto.request.AddExerciseToPlanRequest;
+
 import com.muscledia.workout_service.dto.request.CompleteWorkoutRequest;
 import com.muscledia.workout_service.dto.request.StartWorkoutFromPlanRequest;
 import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
 import com.muscledia.workout_service.dto.request.embedded.AddExerciseRequest;
 import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
 import com.muscledia.workout_service.dto.response.*;
-import com.muscledia.workout_service.event.scheduler.EventOutboxPublisherScheduler;
 import com.muscledia.workout_service.mapper.ExerciseMapper;
-import com.muscledia.workout_service.mapper.WorkoutMapper; // NEW MAPPER
-import com.muscledia.workout_service.model.Workout;
-import com.muscledia.workout_service.model.WorkoutPlan;
+import com.muscledia.workout_service.mapper.WorkoutMapper;
 import com.muscledia.workout_service.model.embedded.WorkoutExercise;
-import com.muscledia.workout_service.model.enums.ExerciseCategory;
-import com.muscledia.workout_service.model.enums.ExerciseDifficulty;
 import com.muscledia.workout_service.service.AuthenticationService;
-import com.muscledia.workout_service.service.EventOutboxService;
 import com.muscledia.workout_service.service.WorkoutPlanService;
 import com.muscledia.workout_service.service.WorkoutService;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.ArraySchema;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.ExampleObject;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/v1/workouts")
@@ -58,9 +40,6 @@ public class WorkoutController {
     private final WorkoutService workoutService;
     private final AuthenticationService authenticationService;
     private final WorkoutPlanService workoutPlanService;
-    private final EventOutboxService eventOutboxService;
-    private final EventOutboxPublisherScheduler scheduler;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
 
     // NEW: Inject Mappers
     private final WorkoutMapper workoutMapper;
