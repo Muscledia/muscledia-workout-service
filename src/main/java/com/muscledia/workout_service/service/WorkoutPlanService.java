@@ -130,6 +130,71 @@ public class WorkoutPlanService {
                 .doOnComplete(() -> log.debug("Retrieved all workout plans"));
     }
 
+    /**
+     * Add exercise to workout plan with proper validation
+     */
+    public Mono<WorkoutPlan> addExerciseToWorkoutPlan(
+            String planId,
+            Long userId,
+            PlannedExercise exercise
+    ) {
+        log.info("Adding exercise '{}' to plan {} for user {}",
+                exercise.getTitle(), planId, userId);
+
+        return findByIdAndValidateOwnership(planId, userId)
+                .flatMap(plan -> {
+                    // Initialize exercises list if null
+                    if (plan.getExercises() == null) {
+                        plan.setExercises(new ArrayList<>());
+                    }
+
+                    // Set exercise index
+                    exercise.setIndex(plan.getExercises().size());
+
+                    // Add exercise to plan
+                    plan.getExercises().add(exercise);
+
+                    // Update metadata
+                    plan.setUpdatedAt(LocalDateTime.now());
+
+                    // Recalculate duration if needed
+                    recalculatePlanDuration(plan);
+
+                    return workoutPlanRepository.save(plan);
+                })
+                .doOnSuccess(saved -> log.info(
+                        "Successfully added exercise to plan. Total exercises: {}",
+                        saved.getExercises().size()
+                ));
+    }
+
+
+    /**
+     * Recalculate plan duration based on exercises
+     */
+    private void recalculatePlanDuration(WorkoutPlan plan) {
+        if (plan.getExercises() == null || plan.getExercises().isEmpty()) {
+            plan.setEstimatedDurationMinutes(0);
+            return;
+        }
+
+        int totalMinutes = plan.getExercises().stream()
+                .mapToInt(exercise -> {
+                    int exerciseTime = 0;
+
+                    // Count sets
+                    int setCount = exercise.getSets() != null ? exercise.getSets().size() : 3;
+
+                    // Estimate time per set (assume 30 seconds per rep + rest)
+                    exerciseTime += setCount * 2; // ~2 minutes per set with rest
+
+                    return exerciseTime;
+                })
+                .sum();
+
+        plan.setEstimatedDurationMinutes(totalMinutes);
+    }
+
     // ==================== PUBLIC WORKOUT PLANS ====================
 
     public Flux<WorkoutPlan> findPublicWorkoutPlans() {

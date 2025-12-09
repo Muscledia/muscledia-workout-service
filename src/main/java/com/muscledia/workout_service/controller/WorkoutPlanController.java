@@ -1,6 +1,7 @@
 package com.muscledia.workout_service.controller;
 
 import com.muscledia.workout_service.model.WorkoutPlan;
+import com.muscledia.workout_service.model.embedded.PlannedExercise;
 import com.muscledia.workout_service.service.AuthenticationService;
 import com.muscledia.workout_service.service.WorkoutPlanService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -196,6 +197,64 @@ public class WorkoutPlanController {
                                         workoutPlan.setCreatedBy(userId);
                                         return workoutPlanService.save(workoutPlan);
                                 });
+        }
+
+        @PostMapping("/{planId}/exercises")
+        @ResponseStatus(HttpStatus.CREATED)
+        @Operation(
+                summary = "Add exercise to workout plan",
+                description = "Add a new exercise to an existing workout plan template",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "201", description = "Exercise added successfully"),
+                @ApiResponse(responseCode = "404", description = "Workout plan not found"),
+                @ApiResponse(responseCode = "401", description = "Authentication required"),
+                @ApiResponse(responseCode = "403", description = "Access denied - can only modify your own plans")
+        })
+        public Mono<ResponseEntity<WorkoutPlan>> addExerciseToWorkoutPlan(
+                @PathVariable String planId,
+                @RequestBody PlannedExercise exercise
+        ) {
+                log.info("=== ADD EXERCISE ENDPOINT CALLED ===");
+                log.info("Plan ID: {}", planId);
+                log.info("Exercise Title: {}", exercise.getTitle());
+                log.info("Exercise Template ID: {}", exercise.getExerciseTemplateId());
+                log.info("Sets count: {}", exercise.getSets() != null ? exercise.getSets().size() : 0);
+
+                return authenticationService.getCurrentUserId()
+                        .doOnNext(userId -> log.info("Current User ID: {}", userId))
+                        .flatMap(userId -> {
+                                log.info("Calling service method addExerciseToWorkoutPlan");
+                                return workoutPlanService.addExerciseToWorkoutPlan(planId, userId, exercise);
+                        })
+                        .doOnNext(plan -> log.info("Service returned plan with {} exercises",
+                                plan.getExercises().size()))
+                        .map(plan -> {
+                                log.info("Returning 200 OK response");
+                                return ResponseEntity.ok(plan);
+                        })
+                        .switchIfEmpty(Mono.defer(() -> {
+                                log.warn("Plan not found, returning 404");
+                                return Mono.just(ResponseEntity.notFound().build());
+                        }))
+                        .doOnSuccess(response -> log.info("Successfully added exercise to plan: {}", planId))
+                        .doOnError(error -> log.error("Error adding exercise to plan: {}", error.getMessage(), error));
+        }
+
+        @DeleteMapping("/{planId}/exercises/{exerciseIndex}")
+        @ResponseStatus(HttpStatus.NO_CONTENT)
+        @Operation(
+                summary = "Remove exercise from workout plan",
+                security = @SecurityRequirement(name = "bearer-key")
+        )
+        public Mono<ResponseEntity<Void>> removeExerciseFromWorkoutPlan(
+                @PathVariable String planId,
+                @PathVariable int exerciseIndex
+        ) {
+                return authenticationService.getCurrentUserId()
+                        .flatMap(userId -> workoutPlanService.removeExerciseFromPlan(planId, userId, exerciseIndex))
+                        .then(Mono.just(ResponseEntity.noContent().<Void>build()));
         }
 
         // ADMIN/SYSTEM ENDPOINTS (For creating public content)
