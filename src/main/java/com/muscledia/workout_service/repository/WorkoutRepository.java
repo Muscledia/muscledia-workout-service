@@ -1,5 +1,6 @@
 package com.muscledia.workout_service.repository;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
 
@@ -242,4 +243,14 @@ public interface WorkoutRepository extends ReactiveMongoRepository<Workout, Stri
     Flux<Workout> findByUserIdAndWorkoutDateGreaterThanEqualOrderByWorkoutDateDesc(Long userId, LocalDateTime startDate);
 
     Flux<Workout> findByUserIdAndWorkoutDateLessThanEqualOrderByWorkoutDateDesc(Long userId, LocalDateTime endDate);
+
+    /**
+     * Find workouts for a user within a date range
+     * Using LocalDateTime to match the Workout.completedAt field type
+     */
+    Flux<Workout> findByUserIdAndCompletedAtBetween(
+            Long userId,
+            LocalDateTime startDate,
+            LocalDateTime endDate
+    );
 }
