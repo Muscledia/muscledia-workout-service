@@ -29,51 +29,12 @@ import java.util.concurrent.CompletableFuture;
 @Tag(name = "Data Population", description = "Administrative endpoints for populating reference data from external APIs (Admin Only)")
 public class DataPopulationController {
 
-    private final MuscleGroupDataService muscleGroupDataService;
     private final AuthenticationService authenticationService;
     private final RoutineFolderService routineFolderService;
     private final HevyDataService hevyDataService;
     private final ExerciseDataMigrationService migrationService;
     private final ExerciseRepository exerciseRepository;
 
-    @PostMapping("/populate-muscle-groups")
-    @Operation(summary = "Populate muscle groups from predefined list", description = "Populate muscle group data from a comprehensive predefined list. This will create all standard muscle groups in the database.", security = @SecurityRequirement(name = "bearer-key"))
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Muscle group data population completed successfully", content = @Content(mediaType = "text/plain", schema = @Schema(type = "string", example = "Muscle group data population completed successfully."))),
-            @ApiResponse(responseCode = "401", description = "Authentication required"),
-            @ApiResponse(responseCode = "403", description = "Admin access required"),
-            @ApiResponse(responseCode = "500", description = "Error during muscle group data population", content = @Content(mediaType = "text/plain", schema = @Schema(type = "string", example = "Error during muscle group data population: Database error")))
-    })
-    public Mono<ResponseEntity<String>> populateMuscleGroups() {
-        return muscleGroupDataService.populateMuscleGroups()
-                .thenReturn(ResponseEntity.ok("Muscle group data population completed successfully."))
-                .onErrorResume(error -> {
-                    log.error("Error during muscle group data population", error);
-                    return Mono.just(ResponseEntity.internalServerError()
-                            .body("Error during muscle group data population: "
-                                    + error.getMessage()));
-                });
-    }
-
-    @PostMapping("/cleanup-duplicate-muscle-groups")
-    @Operation(summary = "Clean up duplicate muscle groups", description = "Remove duplicate muscle group entries from the database. This process identifies and removes muscle groups with similar names, keeping only normalized versions.", security = @SecurityRequirement(name = "bearer-key"))
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Duplicate muscle groups cleanup completed successfully", content = @Content(mediaType = "text/plain", schema = @Schema(type = "string", example = "Duplicate muscle groups cleanup completed successfully."))),
-            @ApiResponse(responseCode = "401", description = "Authentication required"),
-            @ApiResponse(responseCode = "403", description = "Admin access required"),
-            @ApiResponse(responseCode = "500", description = "Error during muscle group cleanup", content = @Content(mediaType = "text/plain", schema = @Schema(type = "string", example = "Error during muscle group cleanup: Database transaction failed")))
-    })
-    public Mono<ResponseEntity<String>> cleanupDuplicateMuscleGroups() {
-        return muscleGroupDataService.cleanupDuplicateMuscleGroups()
-                .thenReturn(ResponseEntity
-                        .ok("Duplicate muscle groups cleanup completed successfully."))
-                .onErrorResume(error -> {
-                    log.error("Error during muscle group cleanup", error);
-                    return Mono.just(ResponseEntity.internalServerError()
-                            .body("Error during muscle group cleanup: "
-                                    + error.getMessage()));
-                });
-    }
 
     // ==========================================
     // HEVY API ENDPOINTS (CLEAN - NO BUSINESS LOGIC)
