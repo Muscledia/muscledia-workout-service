@@ -92,7 +92,6 @@ public class KafkaConfig {
         // Include all types that THIS service will publish.
         return "workout:com.muscledia.workout_service.event.WorkoutCompletedEvent," +
                 "pr:com.muscledia.workout_service.event.PersonalRecordEvent";
-        //"exercise:com.muscledia.workout_service.event.ExerciseCompletedEvent";
     }
 
 
