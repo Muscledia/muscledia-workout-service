@@ -1,6 +1,5 @@
 package com.muscledia.workout_service.event.publisher;
 
-import com.muscledia.workout_service.event.ExerciseCompletedEvent;
 import com.muscledia.workout_service.event.PersonalRecordEvent;
 import com.muscledia.workout_service.event.WorkoutCompletedEvent;
 import com.muscledia.workout_service.service.EventOutboxService;
