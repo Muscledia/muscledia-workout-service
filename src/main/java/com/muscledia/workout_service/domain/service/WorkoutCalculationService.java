@@ -238,6 +238,21 @@ public class WorkoutCalculationService {
     }
 
     /**
+     * Calculate total personal records achieved in this workout
+     */
+    public int calculateTotalPersonalRecords(Workout workout) {
+        if (workout.getExercises() == null || workout.getExercises().isEmpty()) {
+            return 0;
+        }
+
+        return workout.getExercises().stream()
+                .flatMap(exercise -> exercise.getSets().stream())
+                .filter(set -> set.getPersonalRecords() != null && !set.getPersonalRecords().isEmpty())
+                .mapToInt(set -> set.getPersonalRecords().size())
+                .sum();
+    }
+
+    /**
      * Value object for efficiency metrics
      */
     @Builder
