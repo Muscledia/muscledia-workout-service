@@ -10,7 +10,6 @@ import com.muscledia.workout_service.model.Workout;
 import com.muscledia.workout_service.model.enums.WorkoutStatus;
 import com.muscledia.workout_service.repository.WorkoutRepository;
 import com.muscledia.workout_service.service.analytics.PersonalRecordService;
-import com.muscledia.workout_service.validation.WorkoutValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,7 +21,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
