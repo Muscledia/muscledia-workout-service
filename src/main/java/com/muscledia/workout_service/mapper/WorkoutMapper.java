@@ -40,6 +40,7 @@ public class WorkoutMapper {
         WorkoutMetrics metrics = calculationService.calculateWorkoutMetrics(workout);
         List<String> muscleGroups = calculationService.getWorkedMuscleGroups(workout);
         Integer calories = calculationService.estimateCaloriesBurned(workout);
+        int personalRecords = calculationService.calculateTotalPersonalRecords(workout);
 
         return WorkoutResponse.builder()
                 .id(workout.getId())
@@ -58,6 +59,7 @@ public class WorkoutMapper {
                         .totalReps(metrics.getTotalReps())
                         .caloriesBurned(calories)
                         .workedMuscleGroups(muscleGroups)
+                        .personalRecordsAchieved(personalRecords)
                         .build())
                 .context(WorkoutResponse.WorkoutContext.builder()
                         .location(workout.getLocation())
