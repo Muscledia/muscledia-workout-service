@@ -173,6 +173,13 @@ public class WorkoutOrchestrator {
         List<String> muscleGroups = metricsCalculator.getWorkedMuscleGroups(workoutData);
         Integer caloriesBurned = metricsCalculator.estimateCaloriesBurned(workoutData);
 
+        int personalRecordsCount = workout.getExercises().stream()
+                .flatMap(ex -> ex.getSets().stream())
+                .mapToInt(set -> set.getPersonalRecords() != null
+                        ? set.getPersonalRecords().size()
+                        : 0)
+                .sum();
+
         WorkoutCompletedEvent event = WorkoutCompletedEvent.builder()
                 .eventId(java.util.UUID.randomUUID().toString())
                 .userId(workout.getUserId())
@@ -190,6 +197,8 @@ public class WorkoutOrchestrator {
                 .workoutEndTime(workout.getCompletedAt() != null ?
                         workout.getCompletedAt().toInstant(ZoneOffset.UTC) :
                         Instant.now())
+                .personalRecordsAchieved(personalRecordsCount)
+                .streakEligible(true)
                 .workedMuscleGroups(muscleGroups)
                 .timestamp(Instant.now())
                 .metadata(Map.of(
@@ -199,10 +208,16 @@ public class WorkoutOrchestrator {
                 ))
                 .build();
 
+        // ⬅️ ADD THIS: Verify event data before publishing
+        log.info("📤 Publishing WorkoutCompletedEvent: duration={}min, exercises={}, sets={}, reps={}",
+                event.getDurationMinutes(),
+                event.getExercisesCompleted(),
+                event.getTotalSets(),
+                event.getTotalReps());
+
         return eventPublisher.publishWorkoutCompleted(event)
                 .then(Mono.just(event))
-                .doOnSuccess(publishedEvent -> log.info("📤 Published WorkoutCompletedEvent: {} (Personal records will be handled by event listener)",
-                        publishedEvent.getEventId()));
+                .doOnSuccess(publishedEvent -> log.info("✅ WorkoutCompletedEvent published successfully"));
     }
 
     /**
