@@ -1,6 +1,8 @@
 package com.muscledia.workout_service.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.muscledia.workout_service.config.BigDecimalSerializer;
 import com.muscledia.workout_service.model.enums.SetType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -25,15 +27,18 @@ public class WorkoutSetResponse {
     private Integer setNumber;
 
     @JsonProperty("weightKg")
+    @JsonSerialize(using = BigDecimalSerializer.class)
     private BigDecimal weightKg;
+
+    @JsonProperty("distanceMeters")
+    @JsonSerialize(using = BigDecimalSerializer.class)
+    private BigDecimal distanceMeters;
 
     private Integer reps;
 
     @JsonProperty("durationSeconds")
     private Integer durationSeconds;
 
-    @JsonProperty("distanceMeters")
-    private BigDecimal distanceMeters;
 
     @JsonProperty("restSeconds")
     private Integer restSeconds;
