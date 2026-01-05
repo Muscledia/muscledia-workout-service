@@ -82,6 +82,17 @@ public class WorkoutCompletedEvent extends BaseEvent {
     private Instant workoutStartTime; // Use Instant
 
     /**
+     * Number of personal records achieved in this workout
+     */
+    @Min(0)
+    private Integer personalRecordsAchieved;
+
+    /**
+     * Whether this workout is eligible for streak counting
+     */
+    private boolean streakEligible;
+
+    /**
      * When the workout was completed
      */
     @NotNull
