@@ -4,6 +4,7 @@
     import com.muscledia.workout_service.domain.service.WorkoutValidationService;
     import com.muscledia.workout_service.dto.request.StartWorkoutRequest;
     import com.muscledia.workout_service.dto.request.embedded.LogSetRequest;
+    import com.muscledia.workout_service.event.PersonalRecordEvent;
     import com.muscledia.workout_service.exception.ExerciseNotFoundException;
     import com.muscledia.workout_service.exception.InvalidWorkoutStateException;
     import com.muscledia.workout_service.exception.WorkoutNotFoundException;
@@ -93,6 +94,7 @@
                     .tags(request.getTags() != null ? request.getTags() : new ArrayList<>())
                     .exercises(new ArrayList<>())
                     .status(WorkoutStatus.IN_PROGRESS)
+                    .startedAt(LocalDateTime.now())
                     .workoutDate(LocalDateTime.now())
                     .build();
 
@@ -101,9 +103,6 @@
             if (validationResult.isInvalid()) {
                 return Mono.error(new InvalidWorkoutStateException(validationResult.getErrorMessage()));
             }
-
-            // Simple state management
-            workout.startWorkout();
 
             return workoutRepository.save(workout)
                     .doOnSuccess(saved -> log.info("Started workout session: {}", saved.getId()));
@@ -512,7 +511,7 @@
 
         /**
          * Process set for PRs and populate personalRecords field
-         * Reusable method for both logSet and updateSet
+         * FIXED: Publish events AFTER workout is saved
          */
         private Mono<Workout> processSetAndUpdatePRs(
                 Workout workout,
@@ -537,7 +536,7 @@
                             set,
                             workoutId
                     )
-                    .map(prEvents -> {
+                    .flatMap(prEvents -> {
                         log.info("📊 Received {} PR events from PersonalRecordService", prEvents.size());
 
                         if (!prEvents.isEmpty()) {
@@ -555,7 +554,7 @@
                             log.info("✅ Setting personalRecords on set BEFORE save: {}", prTypes);
                             set.setPersonalRecords(prTypes);
 
-                            // NEW: Clean up old PR badges from previous sets in this exercise
+                            // Clean up old PR badges
                             cleanupOldPersonalRecordBadges(exercise, set, prTypes);
 
                             log.info("✅ PR DETECTED: {} achieved {} PRs: {}",
@@ -567,11 +566,16 @@
                             set.setPersonalRecords(null);
                         }
 
-                        return workout;
-                    })
-                    .flatMap(updatedWorkout -> {
-                        log.info("💾 Saving workout with PR information...");
-                        return workoutRepository.save(updatedWorkout);
+                        // ⬅️ STEP 1: Save workout with PR badges
+                        return workoutRepository.save(workout)
+                                .flatMap(savedWorkout -> {
+                                    // ⬅️ STEP 2: AFTER save succeeds, publish events
+                                    if (!prEvents.isEmpty()) {
+                                        return publishPREvents(prEvents)
+                                                .then(Mono.just(savedWorkout));
+                                    }
+                                    return Mono.just(savedWorkout);
+                                });
                     })
                     .doOnSuccess(savedWorkout -> {
                         log.info("✅ Workout saved successfully with cleaned PR badges");
@@ -580,6 +584,24 @@
                         log.error("❌ PR processing failed: {}", error.getMessage(), error);
                         return workoutRepository.save(workout);
                     });
+        }
+
+        /**
+         * NEW: Publish PR events after workout is saved
+         */
+        private Mono<Void> publishPREvents(List<PersonalRecordEvent> events) {
+            return Flux.fromIterable(events)
+                    .flatMap(event ->
+                            personalRecordService.publishPersonalRecord(event)  // ⬅️ Use existing publish method
+                                    .doOnSuccess(v -> log.info("📤 Published PR event: {} for user {}",
+                                            event.getEventId(), event.getUserId()))
+                                    .onErrorResume(error -> {
+                                        log.warn("Failed to publish PR event (non-critical): {}", error.getMessage());
+                                        return Mono.empty();  // Don't fail workout save if event publish fails
+                                    })
+                    )
+                    .then()
+                    .doOnSuccess(v -> log.info("📤 All PR events published successfully"));
         }
 
         /**

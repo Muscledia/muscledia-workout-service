@@ -53,6 +53,14 @@ public class PersonalRecordService implements IPersonalRecordService {
     }
 
     /**
+     * PUBLIC method to publish PersonalRecord event
+     * Used by WorkoutService after workout is saved
+     */
+    public Mono<Void> publishPersonalRecord(PersonalRecordEvent event) {
+        return eventPublisher.publishPersonalRecord(event);
+    }
+
+    /**
      * UPDATED: Main method now returns List<PersonalRecordEvent> instead of Void
      * Keeps ALL your existing logic but collects events instead of publishing
      */
@@ -88,13 +96,43 @@ public class PersonalRecordService implements IPersonalRecordService {
             return Mono.just(Collections.emptyList());
         }
 
-        return detectAndCreatePREvents(userId, exerciseId, exerciseName, set, workoutId)
-                .flatMap(this::publishPersonalRecordEventsUsingExistingPublisher)  // Use existing method!
+        // CHANGED: Only detect and save PRs, DON'T publish yet
+        return detectAndSavePRs(userId, exerciseId, exerciseName, set, workoutId)
                 .doOnSuccess(events -> {
                     if (!events.isEmpty()) {
-                        log.info("IMMEDIATE PR PIPELINE: Detected and published {} PRs for user {}", events.size(), userId);
+                        log.info("🏆 IMMEDIATE PR DETECTION: Found {} PRs for user {}", events.size(), userId);
                     }
                 });
+    }
+
+    /**
+     * NEW: Separate method that only detects and saves, doesn't publish
+     */
+    private Mono<List<PersonalRecordEvent>> detectAndSavePRs(Long userId, String exerciseId,
+                                                             String exerciseName, WorkoutSet set,
+                                                             String workoutId) {
+        List<Mono<PersonalRecordEvent>> prChecks = new ArrayList<>();
+
+        // Check all PR types
+        if (shouldCheckWeightPR(set)) {
+            prChecks.add(checkAndCreateWeightPR(userId, exerciseId, exerciseName, set, workoutId));
+        }
+
+        if (shouldCheckRepsPR(set)) {
+            prChecks.add(checkAndCreateRepsPR(userId, exerciseId, exerciseName, set, workoutId));
+        }
+
+        if (shouldCheckVolumePR(set)) {
+            prChecks.add(checkAndCreateVolumePR(userId, exerciseId, exerciseName, set, workoutId));
+        }
+
+        if (shouldCheckEstimated1RMPR(set)) {
+            prChecks.add(checkAndCreateEstimated1RMPR(userId, exerciseId, exerciseName, set, workoutId));
+        }
+
+        return Flux.mergeSequential(prChecks)
+                .filter(Objects::nonNull)
+                .collectList();
     }
 
     /**
