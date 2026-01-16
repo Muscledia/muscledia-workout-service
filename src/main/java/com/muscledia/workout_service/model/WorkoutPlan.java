@@ -1,7 +1,10 @@
 package com.muscledia.workout_service.model;
 
 import com.muscledia.workout_service.model.embedded.PlannedExercise;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -13,6 +16,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Document(collection = "workout_plans")
 public class WorkoutPlan {
     @Id
@@ -33,6 +39,14 @@ public class WorkoutPlan {
 
     @Field("is_public")
     private Boolean isPublic = true;
+
+    /**
+     * Unique Identifier for manually created routines.
+     * true = Created via 'New Routine' builder
+     * false = Cloned from Public Routine / Saved with Folder
+     */
+    @Field("is_custom")
+    private Boolean isCustom = false;
 
     @Field("created_by")
     private Long createdBy = 1L;
