@@ -131,6 +131,16 @@ public class WorkoutPlanService {
     }
 
     /**
+     * Retrieves workout plans that were manually created by the user.
+     * Uses the 'isCustom' identifier.
+     */
+    public Flux<WorkoutPlan> findCustomPersonalWorkoutPlans(Long userId) {
+        log.debug("Fetching custom personal workout plans for user: {}", userId);
+        return workoutPlanRepository.findByCreatedByAndIsPublicFalse(userId)
+                .filter(plan -> Boolean.TRUE.equals(plan.getIsCustom()));
+    }
+
+    /**
      * Add exercise to workout plan with proper validation
      */
     public Mono<WorkoutPlan> addExerciseToWorkoutPlan(
