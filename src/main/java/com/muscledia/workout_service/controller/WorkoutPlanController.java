@@ -163,40 +163,31 @@ public class WorkoutPlanController {
                                 .flatMapMany(workoutPlanService::findByCreator);
         }
 
+        /**
+         * NEW ENDPOINT: Fetch only manually created personal routines.
+         * Filters by the unique identifier: isCustom = true
+         */
+        @GetMapping("/personal/custom")
+        @Operation(summary = "Get user-created custom plans", description = "Retrieve only workout plans manually created by the user", security = @SecurityRequirement(name = "bearer-key"))
+        @ApiResponses(value = {
+                @ApiResponse(responseCode = "200", description = "Custom plans retrieved successfully")
+        })
+        public Flux<WorkoutPlan> getCustomPersonalWorkoutPlans() {
+                return authenticationService.getCurrentUserId()
+                        .flatMapMany(workoutPlanService::findCustomPersonalWorkoutPlans);
+        }
+
         @PostMapping("/personal")
         @ResponseStatus(HttpStatus.CREATED)
-        @Operation(summary = "Create personal workout plan", description = "Create a new private workout plan for the user", security = @SecurityRequirement(name = "bearer-key"))
-        @ApiResponses(value = {
-                        @ApiResponse(responseCode = "201", description = "Personal workout plan created successfully", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class))),
-                        @ApiResponse(responseCode = "400", description = "Invalid workout plan data"),
-                        @ApiResponse(responseCode = "401", description = "Authentication required")
-        })
-        public Mono<WorkoutPlan> createPersonalWorkoutPlan(
-                        @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Workout plan data to create", content = @Content(mediaType = "application/json", schema = @Schema(implementation = WorkoutPlan.class), examples = @ExampleObject(value = """
-                                        {
-                                          "name": "My Custom Workout",
-                                          "description": "A personalized strength training routine",
-                                          "estimatedDuration": 45,
-                                          "difficulty": "INTERMEDIATE",
-                                          "workoutType": "STRENGTH",
-                                          "exercises": [
-                                            {
-                                              "exerciseId": "507f1f77bcf86cd799439011",
-                                              "exerciseName": "Bench Press",
-                                              "sets": 3,
-                                              "reps": 10,
-                                              "weight": 135.0,
-                                              "restTime": 90
-                                            }
-                                          ]
-                                        }
-                                        """))) @RequestBody WorkoutPlan workoutPlan) {
+        @Operation(summary = "Create personal workout plan", description = "Create a new private, custom workout plan for the user")
+        public Mono<WorkoutPlan> createPersonalWorkoutPlan(@RequestBody WorkoutPlan workoutPlan) {
                 return authenticationService.getCurrentUserId()
-                                .flatMap(userId -> {
-                                        workoutPlan.setIsPublic(false);
-                                        workoutPlan.setCreatedBy(userId);
-                                        return workoutPlanService.save(workoutPlan);
-                                });
+                        .flatMap(userId -> {
+                                workoutPlan.setIsPublic(false);
+                                workoutPlan.setIsCustom(true); // SETTING THE UNIQUE IDENTIFIER
+                                workoutPlan.setCreatedBy(userId);
+                                return workoutPlanService.save(workoutPlan);
+                        });
         }
 
         @PostMapping("/{planId}/exercises")
