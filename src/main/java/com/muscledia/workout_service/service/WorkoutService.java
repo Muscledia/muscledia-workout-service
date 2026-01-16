@@ -219,7 +219,7 @@
             if (useOrchestrator) {
                 // Use decoupled orchestrator - personal records handled via events
                 return workoutOrchestrator.completeWorkout(workoutId, userId, completionData)
-                        .doOnSuccess(workout -> log.info("✅ Workout completed using decoupled orchestrator: {}", workoutId));
+                        .doOnSuccess(workout -> log.info("Workout completed using decoupled orchestrator: {}", workoutId));
             } else {
                 // Legacy path for backward compatibility
                 return completeLegacyWorkout(workoutId, userId, completionData);
@@ -521,12 +521,12 @@
                 Long userId) {
 
             if (!isValidForPRProcessing(set)) {
-                log.debug("❌ Set not valid for PR processing, skipping. Completed: {}, SetType: {}",
+                log.debug("Set not valid for PR processing, skipping. Completed: {}, SetType: {}",
                         set.getCompleted(), set.getSetType());
                 return workoutRepository.save(workout);
             }
 
-            log.info("🔍 Processing set for immediate PRs: exercise={}, weight={}kg, reps={}",
+            log.info("Processing set for immediate PRs: exercise={}, weight={}kg, reps={}",
                     exercise.getExerciseName(), set.getWeightKg(), set.getReps());
 
             return personalRecordService.processSetForImmediatePRs(
@@ -537,7 +537,7 @@
                             workoutId
                     )
                     .flatMap(prEvents -> {
-                        log.info("📊 Received {} PR events from PersonalRecordService", prEvents.size());
+                        log.info("Received {} PR events from PersonalRecordService", prEvents.size());
 
                         if (!prEvents.isEmpty()) {
                             List<String> prTypes = prEvents.stream()
@@ -551,25 +551,25 @@
                                     .distinct()
                                     .collect(java.util.stream.Collectors.toList());
 
-                            log.info("✅ Setting personalRecords on set BEFORE save: {}", prTypes);
+                            log.info("Setting personalRecords on set BEFORE save: {}", prTypes);
                             set.setPersonalRecords(prTypes);
 
                             // Clean up old PR badges
                             cleanupOldPersonalRecordBadges(exercise, set, prTypes);
 
-                            log.info("✅ PR DETECTED: {} achieved {} PRs: {}",
+                            log.info("PR DETECTED: {} achieved {} PRs: {}",
                                     exercise.getExerciseName(),
                                     prTypes.size(),
                                     String.join(", ", prTypes));
                         } else {
-                            log.info("ℹ️ No PRs detected for this set");
+                            log.info("ℹNo PRs detected for this set");
                             set.setPersonalRecords(null);
                         }
 
-                        // ⬅️ STEP 1: Save workout with PR badges
+                        // STEP 1: Save workout with PR badges
                         return workoutRepository.save(workout)
                                 .flatMap(savedWorkout -> {
-                                    // ⬅️ STEP 2: AFTER save succeeds, publish events
+                                    // STEP 2: AFTER save succeeds, publish events
                                     if (!prEvents.isEmpty()) {
                                         return publishPREvents(prEvents)
                                                 .then(Mono.just(savedWorkout));
@@ -578,10 +578,10 @@
                                 });
                     })
                     .doOnSuccess(savedWorkout -> {
-                        log.info("✅ Workout saved successfully with cleaned PR badges");
+                        log.info("Workout saved successfully with cleaned PR badges");
                     })
                     .onErrorResume(error -> {
-                        log.error("❌ PR processing failed: {}", error.getMessage(), error);
+                        log.error("PR processing failed: {}", error.getMessage(), error);
                         return workoutRepository.save(workout);
                     });
         }
@@ -592,8 +592,8 @@
         private Mono<Void> publishPREvents(List<PersonalRecordEvent> events) {
             return Flux.fromIterable(events)
                     .flatMap(event ->
-                            personalRecordService.publishPersonalRecord(event)  // ⬅️ Use existing publish method
-                                    .doOnSuccess(v -> log.info("📤 Published PR event: {} for user {}",
+                            personalRecordService.publishPersonalRecord(event)
+                                    .doOnSuccess(v -> log.info("Published PR event: {} for user {}",
                                             event.getEventId(), event.getUserId()))
                                     .onErrorResume(error -> {
                                         log.warn("Failed to publish PR event (non-critical): {}", error.getMessage());
@@ -601,7 +601,7 @@
                                     })
                     )
                     .then()
-                    .doOnSuccess(v -> log.info("📤 All PR events published successfully"));
+                    .doOnSuccess(v -> log.info("All PR events published successfully"));
         }
 
         /**
@@ -617,7 +617,7 @@
                 return;
             }
 
-            log.info("🧹 Cleaning up old PR badges for exercise: {}", exercise.getExerciseName());
+            log.info("Cleaning up old PR badges for exercise: {}", exercise.getExerciseName());
 
             for (WorkoutSet previousSet : exercise.getSets()) {
                 // Skip the current set
@@ -636,10 +636,10 @@
                         .collect(java.util.stream.Collectors.toList());
 
                 if (filteredPRs.isEmpty()) {
-                    log.info("   🗑️ Removing all PR badges from set {}", previousSet.getSetNumber());
+                    log.info("Removing all PR badges from set {}", previousSet.getSetNumber());
                     previousSet.setPersonalRecords(null);
                 } else if (filteredPRs.size() < previousSet.getPersonalRecords().size()) {
-                    log.info("   🔄 Updating PR badges for set {} from {} to {}",
+                    log.info("Updating PR badges for set {} from {} to {}",
                             previousSet.getSetNumber(),
                             previousSet.getPersonalRecords(),
                             filteredPRs);

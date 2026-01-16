@@ -88,7 +88,7 @@ public class PersonalRecordService implements IPersonalRecordService {
     public Mono<List<PersonalRecordEvent>> processSetForImmediatePRs(Long userId, String exerciseId,
                                                                      String exerciseName, WorkoutSet set,
                                                                      String workoutId) {
-        log.debug("🔍Processing set for immediate PRs: user={}, exercise={}, weight={}, reps={}",
+        log.debug("Processing set for immediate PRs: user={}, exercise={}, weight={}, reps={}",
                 userId, exerciseId, set.getWeightKg(), set.getReps());
 
         // Business validation
@@ -100,7 +100,7 @@ public class PersonalRecordService implements IPersonalRecordService {
         return detectAndSavePRs(userId, exerciseId, exerciseName, set, workoutId)
                 .doOnSuccess(events -> {
                     if (!events.isEmpty()) {
-                        log.info("🏆 IMMEDIATE PR DETECTION: Found {} PRs for user {}", events.size(), userId);
+                        log.info("IMMEDIATE PR DETECTION: Found {} PRs for user {}", events.size(), userId);
                     }
                 });
     }
