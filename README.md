@@ -1,163 +1,235 @@
-# 🏋️ Muscledia Workout Service
+# Muscledia - Workout Service
 
-A reactive microservice built with Spring WebFlux for managing workouts, exercises, and fitness analytics.
+Reactive microservice for managing workouts, exercises, fitness analytics, and personal records. Built with Spring WebFlux for non-blocking, high-concurrency operations.
 
-## 🔐 Authentication
+---
 
-Most endpoints require JWT Bearer token authentication. Include the token in the `Authorization` header:
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Java 21 |
+| Framework | Spring Boot 3, Spring WebFlux (reactive) |
+| Database | MongoDB (reactive driver) |
+| Auth | JWT Bearer tokens (issued by User Service) |
+| External APIs | Hevy API, ExerciseDB API |
+| Build | Maven |
+| Docs | OpenAPI / Swagger UI |
+
+---
+
+## Architecture
+
+This service is part of the Muscledia microservices ecosystem. It operates reactively — all operations return `Mono<T>` (single result) or `Flux<T>` (stream of results) rather than blocking threads.
+
+**Responsibilities:**
+- Workout logging and retrieval
+- Exercise and muscle group catalogue management
+- Fitness analytics, progress tracking, and personal record detection
+- Workout plan and routine folder management
+- External fitness data ingestion (Hevy, ExerciseDB)
+
+**Key design decisions:**
+- Spring WebFlux chosen over Spring MVC because workout analytics and AI recommendation calls are I/O-bound — non-blocking threads handle concurrent requests without thread exhaustion
+- MongoDB's reactive driver (`ReactiveMongoRepository`) pairs naturally with WebFlux — no blocking database calls in the request pipeline
+- JWT validation is stateless — tokens issued by the User Service are validated locally without a round-trip to an auth server
+
+---
+
+## Authentication
+
+All protected endpoints require a JWT Bearer token issued by the `muscledia-user-service`.
 
 ```
 Authorization: Bearer <your-jwt-token>
 ```
 
-## 📋 API Endpoints Overview
+**Access levels:**
+- Public — no token required
+- Authenticated — valid JWT required
+- Admin — valid JWT with `ADMIN` role required
 
-### 🔑 Authentication Test (`/api/v1/auth`)
+---
 
-| Method | Endpoint      | Return Type                 | Auth     | Description           |
-| ------ | ------------- | --------------------------- | -------- | --------------------- |
-| `GET`  | `/me`         | `Mono<Map<String, Object>>` | ✅       | Get current user info |
-| `GET`  | `/admin-test` | `Mono<Map<String, String>>` | ✅ Admin | Test admin access     |
-| `GET`  | `/user-test`  | `Mono<Map<String, String>>` | ✅ User  | Test user access      |
-| `GET`  | `/test`       | `Mono<Map<String, String>>` | ❌       | Health check          |
+## API Reference
 
-### 🏋️ Workouts (`/api/v1/workouts`)
+**Base URL:** `http://localhost:8080`
+**Swagger UI:** `http://localhost:8080/swagger-ui.html`
+**OpenAPI spec:** `http://localhost:8080/v3/api-docs`
 
-| Method   | Endpoint       | Return Type     | Auth     | Description                |
-| -------- | -------------- | --------------- | -------- | -------------------------- |
-| `GET`    | `/`            | `Flux<Workout>` | ✅       | Get user's workouts        |
-| `GET`    | `/{workoutId}` | `Mono<Workout>` | ✅       | Get workout by ID          |
-| `POST`   | `/`            | `Mono<Workout>` | ✅       | Create new workout         |
-| `DELETE` | `/{workoutId}` | `Mono<Void>`    | ✅       | Delete workout             |
-| `GET`    | `/date-range`  | `Flux<Workout>` | ✅       | Get workouts by date range |
-| `GET`    | `/admin/all`   | `Flux<Workout>` | ✅ Admin | Get all workouts (admin)   |
+---
 
-### 📊 Analytics (`/api/v1/analytics`)
+### Workouts — `/api/v1/workouts`
 
-| Method   | Endpoint                                  | Return Type                                      | Auth | Description               |
-| -------- | ----------------------------------------- | ------------------------------------------------ | ---- | ------------------------- |
-| `GET`    | `/dashboard`                              | `Flux<WorkoutAnalyticsResponse>`                 | ✅   | Dashboard analytics       |
-| `GET`    | `/period/{period}`                        | `Mono<ResponseEntity<WorkoutAnalyticsResponse>>` | ✅   | Period-specific analytics |
-| `GET`    | `/history/{period}`                       | `Flux<WorkoutAnalyticsResponse>`                 | ✅   | Historical analytics      |
-| `GET`    | `/personal-records`                       | `Flux<PersonalRecord>`                           | ✅   | All personal records      |
-| `GET`    | `/personal-records/recent`                | `Mono<ResponseEntity<List<PersonalRecord>>>`     | ✅   | Recent PRs                |
-| `GET`    | `/personal-records/exercise/{exerciseId}` | `Flux<PersonalRecord>`                           | ✅   | Exercise PRs              |
-| `GET`    | `/personal-records/statistics`            | `Mono<PRStatistics>`                             | ✅   | PR statistics             |
-| `GET`    | `/progress/{exerciseId}`                  | `Mono<ResponseEntity<ProgressTrackingResponse>>` | ✅   | Exercise progress         |
-| `POST`   | `/check-pr`                               | `Mono<ResponseEntity<Boolean>>`                  | ✅   | Check potential PR        |
-| `POST`   | `/refresh`                                | `Mono<ResponseEntity<String>>`                   | ✅   | Refresh analytics         |
-| `DELETE` | `/personal-records/{prId}`                | `Mono<ResponseEntity<String>>`                   | ✅   | Delete PR record          |
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/` | Authenticated | Get authenticated user's workouts |
+| GET | `/{workoutId}` | Authenticated | Get workout by ID |
+| POST | `/` | Authenticated | Create new workout |
+| DELETE | `/{workoutId}` | Authenticated | Delete workout |
+| GET | `/date-range` | Authenticated | Get workouts within a date range |
+| GET | `/admin/all` | Admin | Get all workouts across users |
 
-### 💪 Exercises (`/api/v1/exercises`)
+---
 
-| Method   | Endpoint                                   | Return Type                      | Auth     | Description                   |
-| -------- | ------------------------------------------ | -------------------------------- | -------- | ----------------------------- |
-| `GET`    | `/{id}`                                    | `Mono<ResponseEntity<Exercise>>` | ❌       | Get exercise by ID            |
-| `GET`    | `/name/{name}`                             | `Mono<ResponseEntity<Exercise>>` | ❌       | Get exercise by name          |
-| `GET`    | `/search`                                  | `Flux<Exercise>`                 | ❌       | Search exercises              |
-| `GET`    | `/search/name`                             | `Flux<Exercise>`                 | ❌       | Search by name                |
-| `GET`    | `/equipment/{equipment}`                   | `Flux<Exercise>`                 | ❌       | Filter by equipment           |
-| `GET`    | `/difficulty/{difficulty}`                 | `Flux<Exercise>`                 | ❌       | Filter by difficulty          |
-| `GET`    | `/muscle/{muscle}`                         | `Flux<Exercise>`                 | ❌       | Filter by muscle              |
-| `GET`    | `/difficulty/{difficulty}/muscle/{muscle}` | `Flux<Exercise>`                 | ❌       | Filter by difficulty & muscle |
-| `GET`    | `/`                                        | `Flux<Exercise>`                 | ❌       | Get all exercises             |
-| `POST`   | `/`                                        | `Mono<Exercise>`                 | ✅ Admin | Create exercise               |
-| `PUT`    | `/{id}`                                    | `Mono<Exercise>`                 | ✅ Admin | Update exercise               |
-| `DELETE` | `/{id}`                                    | `Mono<Void>`                     | ✅ Admin | Delete exercise               |
+### Analytics — `/api/v1/analytics`
 
-### 🎯 Muscle Groups (`/api/v1/muscle-groups`)
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/dashboard` | Authenticated | Full dashboard analytics for user |
+| GET | `/period/{period}` | Authenticated | Analytics for a specific period |
+| GET | `/history/{period}` | Authenticated | Historical analytics over time |
+| GET | `/personal-records` | Authenticated | All personal records |
+| GET | `/personal-records/recent` | Authenticated | Most recent PRs |
+| GET | `/personal-records/exercise/{exerciseId}` | Authenticated | PRs for a specific exercise |
+| GET | `/personal-records/statistics` | Authenticated | Aggregate PR statistics |
+| GET | `/progress/{exerciseId}` | Authenticated | Progress tracking for an exercise |
+| POST | `/check-pr` | Authenticated | Check if a new set is a personal record |
+| POST | `/refresh` | Authenticated | Refresh analytics cache |
+| DELETE | `/personal-records/{prId}` | Authenticated | Delete a PR record |
 
-| Method   | Endpoint                  | Return Type                         | Auth     | Description            |
-| -------- | ------------------------- | ----------------------------------- | -------- | ---------------------- |
-| `GET`    | `/{id}`                   | `Mono<ResponseEntity<MuscleGroup>>` | ❌       | Get muscle group by ID |
-| `GET`    | `/name/{name}`            | `Mono<ResponseEntity<MuscleGroup>>` | ❌       | Get by name            |
-| `GET`    | `/latin-name/{latinName}` | `Mono<ResponseEntity<MuscleGroup>>` | ❌       | Get by Latin name      |
-| `GET`    | `/search`                 | `Flux<MuscleGroup>`                 | ❌       | Search muscle groups   |
-| `GET`    | `/search/name`            | `Flux<MuscleGroup>`                 | ❌       | Search by name         |
-| `GET`    | `/search/latin-name`      | `Flux<MuscleGroup>`                 | ❌       | Search by Latin name   |
-| `GET`    | `/names`                  | `Flux<MuscleGroup>`                 | ❌       | Get by multiple names  |
-| `GET`    | `/with-descriptions`      | `Flux<MuscleGroup>`                 | ❌       | Get with descriptions  |
-| `GET`    | `/`                       | `Flux<MuscleGroup>`                 | ❌       | Get all muscle groups  |
-| `POST`   | `/`                       | `Mono<MuscleGroup>`                 | ✅ Admin | Create muscle group    |
-| `PUT`    | `/{id}`                   | `Mono<MuscleGroup>`                 | ✅ Admin | Update muscle group    |
-| `DELETE` | `/{id}`                   | `Mono<Void>`                        | ✅ Admin | Delete muscle group    |
+**Personal record detection:** when a workout is logged, the service compares the recorded weight and reps against the stored maximum for that exercise. If a new record is set, a `PersonalRecordEvent` is published to Kafka for the Gamification Service to consume.
 
-### 📋 Workout Plans (`/api/v1/workout-plans`)
+---
 
-| Method   | Endpoint         | Return Type                         | Auth     | Description            |
-| -------- | ---------------- | ----------------------------------- | -------- | ---------------------- |
-| `GET`    | `/public/{id}`   | `Mono<ResponseEntity<WorkoutPlan>>` | ❌       | Get public plan by ID  |
-| `GET`    | `/public`        | `Flux<WorkoutPlan>`                 | ❌       | Get all public plans   |
-| `GET`    | `/public/search` | `Flux<WorkoutPlan>`                 | ❌       | Search public plans    |
-| `GET`    | `/personal`      | `Flux<WorkoutPlan>`                 | ✅       | Get personal plans     |
-| `GET`    | `/my-created`    | `Flux<WorkoutPlan>`                 | ✅       | Get user-created plans |
-| `POST`   | `/personal`      | `Mono<WorkoutPlan>`                 | ✅       | Create personal plan   |
-| `POST`   | `/public`        | `Mono<WorkoutPlan>`                 | ✅ Admin | Create public plan     |
-| `GET`    | `/`              | `Flux<WorkoutPlan>`                 | ❌       | Get all plans          |
-| `PUT`    | `/{id}`          | `Mono<WorkoutPlan>`                 | ✅ Admin | Update plan            |
-| `DELETE` | `/{id}`          | `Mono<Void>`                        | ✅ Admin | Delete plan            |
+### Exercises — `/api/v1/exercises`
 
-### 📁 Routine Folders (`/api/v1/routine-folders`)
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/` | Public | Get all exercises |
+| GET | `/{id}` | Public | Get exercise by ID |
+| GET | `/name/{name}` | Public | Get exercise by name |
+| GET | `/search` | Public | Search exercises |
+| GET | `/equipment/{equipment}` | Public | Filter by equipment type |
+| GET | `/difficulty/{difficulty}` | Public | Filter by difficulty level |
+| GET | `/muscle/{muscle}` | Public | Filter by target muscle |
+| GET | `/difficulty/{difficulty}/muscle/{muscle}` | Public | Filter by difficulty and muscle |
+| POST | `/` | Admin | Create exercise |
+| PUT | `/{id}` | Admin | Update exercise |
+| DELETE | `/{id}` | Admin | Delete exercise |
 
-| Method   | Endpoint                     | Return Type                           | Auth     | Description                 |
-| -------- | ---------------------------- | ------------------------------------- | -------- | --------------------------- |
-| `GET`    | `/public/{id}`               | `Mono<ResponseEntity<RoutineFolder>>` | ❌       | Get public folder by ID     |
-| `GET`    | `/public`                    | `Flux<RoutineFolder>`                 | ❌       | Get all public folders      |
-| `GET`    | `/public/hevy/{hevyId}`      | `Mono<ResponseEntity<RoutineFolder>>` | ❌       | Get by Hevy ID              |
-| `GET`    | `/public/difficulty/{level}` | `Flux<RoutineFolder>`                 | ❌       | Filter by difficulty        |
-| `GET`    | `/public/equipment/{type}`   | `Flux<RoutineFolder>`                 | ❌       | Filter by equipment         |
-| `GET`    | `/public/split/{split}`      | `Flux<RoutineFolder>`                 | ❌       | Filter by workout split     |
-| `GET`    | `/all`                       | `Flux<RoutineFolder>`                 | ❌       | Get all folders             |
-| `POST`   | `/save/{publicId}`           | `Mono<RoutineFolder>`                 | ✅       | Save to personal collection |
-| `GET`    | `/personal`                  | `Flux<RoutineFolder>`                 | ✅       | Get personal folders        |
-| `POST`   | `/personal`                  | `Mono<RoutineFolder>`                 | ✅       | Create personal folder      |
-| `POST`   | `/`                          | `Mono<RoutineFolder>`                 | ✅ Admin | Create folder               |
-| `PUT`    | `/{id}`                      | `Mono<RoutineFolder>`                 | ✅ Admin | Update folder               |
-| `DELETE` | `/{id}`                      | `Mono<Void>`                          | ✅ Admin | Delete folder               |
+---
 
-### ⚙️ Data Population (`/api/admin/data`)
+### Muscle Groups — `/api/v1/muscle-groups`
 
-| Method | Endpoint                  | Return Type                    | Auth     | Description                 |
-| ------ | ------------------------- | ------------------------------ | -------- | --------------------------- |
-| `POST` | `/populate-exercises`     | `Mono<ResponseEntity<String>>` | ✅ Admin | Populate exercises from API |
-| `POST` | `/populate-muscle-groups` | `Mono<ResponseEntity<String>>` | ✅ Admin | Populate muscle groups      |
-| `POST` | `/populate-all`           | `Mono<ResponseEntity<String>>` | ✅ Admin | Populate all reference data |
-| `POST` | `/hevy/fetch-all`         | `Mono<ResponseEntity<String>>` | ✅ Admin | Fetch Hevy API data         |
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/` | Public | Get all muscle groups |
+| GET | `/{id}` | Public | Get muscle group by ID |
+| GET | `/name/{name}` | Public | Get by common name |
+| GET | `/latin-name/{latinName}` | Public | Get by anatomical Latin name |
+| GET | `/search` | Public | Search muscle groups |
+| GET | `/with-descriptions` | Public | Get with full descriptions |
+| POST | `/` | Admin | Create muscle group |
+| PUT | `/{id}` | Admin | Update muscle group |
+| DELETE | `/{id}` | Admin | Delete muscle group |
 
-## 🔧 Key Features
+---
 
-- **Reactive Architecture**: Built with Spring WebFlux for high-performance non-blocking operations
-- **JWT Authentication**: Secure authentication with role-based and permission-based authorization
-- **Comprehensive Analytics**: Workout analytics, progress tracking, and personal records
-- **External API Integration**: Hevy API integration for workout routines
-- **MongoDB**: Reactive MongoDB for scalable data storage
-- **OpenAPI Documentation**: Interactive API documentation with Swagger UI
+### Workout Plans — `/api/v1/workout-plans`
 
-## 🚀 Getting Started
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/public` | Public | Get all public plans |
+| GET | `/public/{id}` | Public | Get public plan by ID |
+| GET | `/public/search` | Public | Search public plans |
+| GET | `/personal` | Authenticated | Get user's personal plans |
+| GET | `/my-created` | Authenticated | Get plans created by user |
+| POST | `/personal` | Authenticated | Create personal plan |
+| POST | `/public` | Admin | Create public plan |
+| PUT | `/{id}` | Admin | Update plan |
+| DELETE | `/{id}` | Admin | Delete plan |
 
-1. **Clone the repository**
-2. **Configure MongoDB connection** in `application.yml`
-3. **Set JWT configuration** (secret key, issuer)
-4. **Run the application**: `./mvnw spring-boot:run`
-5. **Access Swagger UI**: `http://localhost:8080/swagger-ui.html`
+---
 
-## 📈 Return Types Reference
+### Routine Folders — `/api/v1/routine-folders`
 
-- `Mono<T>`: Single asynchronous result (or empty)
-- `Flux<T>`: Stream of 0-N asynchronous results
-- `ResponseEntity<T>`: HTTP response with status codes
-- `Void`: No return value (for delete operations)
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/public` | Public | Get all public folders |
+| GET | `/public/{id}` | Public | Get public folder by ID |
+| GET | `/public/difficulty/{level}` | Public | Filter by difficulty |
+| GET | `/public/equipment/{type}` | Public | Filter by equipment |
+| GET | `/public/split/{split}` | Public | Filter by workout split |
+| GET | `/personal` | Authenticated | Get user's personal folders |
+| POST | `/save/{publicId}` | Authenticated | Save public folder to personal collection |
+| POST | `/personal` | Authenticated | Create personal folder |
+| POST | `/` | Admin | Create folder |
+| PUT | `/{id}` | Admin | Update folder |
+| DELETE | `/{id}` | Admin | Delete folder |
 
-## 🏗️ Architecture
+---
 
-This service is part of the Muscledia microservices architecture:
+### Data Population — `/api/admin/data`
 
-- **Reactive**: Uses Spring WebFlux for non-blocking operations
-- **JWT Validation**: Validates tokens issued by User Service
-- **MongoDB**: Stores workout data, analytics, and reference data
-- **External APIs**: Integrates with Hevy and ExerciseDB APIs
+Admin-only endpoints for seeding reference data from external APIs.
 
-## 📖 Additional Documentation
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/populate-exercises` | Populate exercise catalogue from ExerciseDB |
+| POST | `/populate-muscle-groups` | Populate muscle group definitions |
+| POST | `/populate-all` | Populate all reference data in one call |
+| POST | `/hevy/fetch-all` | Fetch and sync workout routines from Hevy API |
 
-- [JWT Authentication Guide](JWT-Microservices-Architecture-Guide.md)
-- [Integration Summary](Workout-Service-JWT-Integration-Summary.md)
+---
+
+## Return Types
+
+| Type | Meaning |
+|---|---|
+| `Mono<T>` | Single asynchronous result — completes with one item or empty |
+| `Flux<T>` | Stream of 0-N asynchronous results |
+| `ResponseEntity<T>` | HTTP response with explicit status code control |
+| `Mono<Void>` | Completes with no return value — used for delete operations |
+
+---
+
+## Kafka Events Published
+
+| Event | Trigger | Consumer |
+|---|---|---|
+| `WorkoutCompletedEvent` | User logs a workout | Gamification Service |
+| `PersonalRecordEvent` | New PR detected during workout logging | Gamification Service |
+
+Events are published asynchronously — the Workout Service does not wait for the Gamification Service to process them. If the Gamification Service is down, events queue in Kafka and are processed on recovery.
+
+---
+
+## Running Locally
+
+**Prerequisites:** Java 21, Maven, MongoDB running locally or via Docker
+
+```bash
+# Start MongoDB
+docker run -d -p 27017:27017 --name muscledia-mongodb mongo:latest
+```
+
+**application.yml configuration:**
+
+```yaml
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/muscledia_workouts
+
+jwt:
+  secret: <your-secret-key>
+  issuer: muscledia-user-service
+```
+
+```bash
+# Run the service
+./mvnw spring-boot:run
+```
+
+**Endpoints after startup:**
+- API: `http://localhost:8080`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- Health check: `http://localhost:8080/actuator/health`
+
+---
+
+## Known Limitations
+
+- Automated integration tests for Kafka event publishing not yet implemented — planned via Testcontainers
+- Analytics refresh endpoint triggers a full recalculation — incremental updates are a planned improvement
